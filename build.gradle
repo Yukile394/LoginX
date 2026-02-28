@@ -5,25 +5,29 @@ plugins {
 
 group = 'com.loginx'
 version = '1.0.0'
-archivesBaseName = 'LoginX'
+description = 'LoginX Plugin for Paper 1.21'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    // SNAPSHOT yerine lokal jar kullanıyoruz
-    compileOnly files('libs/paper-api-1.21.1-R0.1.jar')
+    compileOnly files('libs/paper-api-1.21-R0.1.jar')
 }
 
-java {
-    toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
-    }
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
 }
 
-tasks.named('jar') {
+tasks.shadowJar {
+    archiveBaseName.set('LoginX')
+    archiveVersion.set('1.0.0')
     archiveClassifier.set('')
+    from(sourceSets.main.get().output)
 }
-
-// ShadowJar plugin kendi task’ını sağlıyor, manuel ekleme yok
