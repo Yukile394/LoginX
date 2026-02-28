@@ -1,16 +1,33 @@
-name: LoginX
-version: 1.0
-main: com.loginx.LoginX
-api-version: 1.21
-author: LoginX
-description: Secure login monitor system.
+name: Build LoginX
 
-commands:
-  logingoster:
-    description: Oyuncunun login geçmişini gösterir
-    usage: /logingoster <oyuncu>
-    permission: loginx.log
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
 
-permissions:
-  loginx.log:
-    default: op
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Grant Execute Permission
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew build
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LoginX
+          path: build/libs/*.jar
