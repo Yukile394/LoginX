@@ -1,9 +1,8 @@
-name: Build and Release LoginX
+name: Build LoginX
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [ "main" ]
   pull_request:
 
 jobs:
@@ -24,27 +23,11 @@ jobs:
       - name: Grant Execute Permission
         run: chmod +x gradlew
 
-      - name: Build Shadow Jar
+      - name: Build with Gradle
         run: ./gradlew shadowJar
 
-      - name: Upload Artifact to Actions
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LoginX
-          path: build/libs/*.jar
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref_name, 'v')
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Artifact to Release
-        if: startsWith(github.ref_name, 'v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: build/libs/*.jar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: build/libs/LoginX-1.0.0.jar
