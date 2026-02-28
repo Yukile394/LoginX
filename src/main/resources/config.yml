@@ -1,21 +1,14 @@
-# Renkler (RGB Flop)
-colors:
-  primary: "#FF56A1"
-  secondary: "#FFA6C1"
-  success: "#FFB0E0"
-  error: "#FF5555"
-
-# Sesler
-sounds:
-  register_success: "ENTITY_PLAYER_LEVELUP"
-  login_success: "ENTITY_EXPERIENCE_ORB_PICKUP"
-
-# Title & ActionBar ayarları
-title:
-  register: "§dKayıt Ol §f/register <şifre> <şifre>"
-  login: "§dGiriş Yap §f/login <şifre>"
-  register_success: "§dBaşarıyla kayıt oldun!"
-  login_success: "§dBaşarıyla giriş yaptın!"
-
-# Login güvenlik
-force_login: true
+cooldown: 2000
+max-fail-attempts: 3
+title-join:
+  title: "&dKayıt Ol"
+  subtitle: "&f/register <şifre> <şifre>"
+  fade-in: 10
+  stay: 70
+  fade-out: 20
+title-login-success:
+  title: "&aGiriş Başarılı!"
+  subtitle: "&fHoşgeldin <oyuncu>"
+  fade-in: 10
+  stay: 70
+  fade-out: 20
