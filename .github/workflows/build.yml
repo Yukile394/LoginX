@@ -2,10 +2,8 @@ name: Build and Release LoginX
 
 on:
   push:
-    branches:
-      - main        # main branch push → artifact
-    tags:
-      - 'v*'        # v1.0.0 gibi tag push → release
+    branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
 
 jobs:
@@ -30,7 +28,6 @@ jobs:
         run: ./gradlew shadowJar
 
       - name: Upload Artifact to Actions
-        if: github.ref_name == 'main' || startsWith(github.ref_name, 'refs/heads/')
         uses: actions/upload-artifact@v4
         with:
           name: LoginX
