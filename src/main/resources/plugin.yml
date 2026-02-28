@@ -1,5 +1,5 @@
 name: LoginX
-version: 1.0.0
+version: 1.0.1
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
@@ -12,6 +12,9 @@ commands:
   logingoster:
     description: Oyuncu login bilgilerini gösterir (Ops)
     usage: /logingoster <oyuncu>
+  incele:
+    description: Oyuncu bilgilerini opslar görebilir
+    usage: /incele <oyuncu>
 permissions:
   loginx.view:
     description: Oyuncuların loginlerini görebilir
