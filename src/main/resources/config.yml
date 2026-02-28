@@ -1,7 +1,12 @@
-cooldown: 2000
-max-fail-attempts: 3
-title-join:
-  fade-in: 10
-  stay: 70
-  fade-out: 20
-kick-timeout: 60
+login_timeout: 60 # saniye, login/register yapmazsa atılır
+title_interval: 4 # title spam sayısı
+title_colors:
+  register:
+    header: "&d&lKayıt Ol"
+    footer: "&f/register <şifre> <şifre>"
+  login:
+    header: "&b&lGiriş Yap"
+    footer: "&f/login <şifre>"
+  already_logged_in:
+    header: "&aZaten giriş yaptın"
+    footer: "&f"
