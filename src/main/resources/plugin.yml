@@ -4,14 +4,13 @@ main: com.loginx.LoginX
 api-version: 1.21
 commands:
   register:
-    description: Kayıt olma komutu.
+    description: Kayıt olma komutu
   login:
-    description: Giriş yapma komutu.
+    description: Giriş yapma komutu
   logingoster:
-    description: OP'lar için tüm verileri listeler.
+    description: Verileri listeleme (OP)
     permission: loginx.view
 permissions:
   loginx.view:
-    description: Verileri görme yetkisi.
+    description: Tüm loginleri görme yetkisi
     default: op
-
