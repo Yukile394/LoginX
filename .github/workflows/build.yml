@@ -1,4 +1,4 @@
-name: Build LoginX
+name: Build and Release LoginX
 
 on:
   push:
@@ -26,8 +26,22 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build
 
-      - name: Upload Artifact
+      - name: Upload Artifact to Actions
         uses: actions/upload-artifact@v4
         with:
           name: LoginX
           path: build/libs/*.jar
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/libs/*.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
