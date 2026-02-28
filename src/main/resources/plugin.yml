@@ -4,18 +4,14 @@ main: com.loginx.LoginX
 api-version: 1.21
 commands:
   register:
-    description: Kayıt ol
-    usage: /register <şifre> <şifre>
+    description: Kayıt olma komutu.
   login:
-    description: Giriş yap
-    usage: /login <şifre>
+    description: Giriş yapma komutu.
   logingoster:
-    description: Oyuncu login bilgilerini gösterir (OP)
-    usage: /logingoster <oyuncu>
-  incele:
-    description: Oyuncu inceleme menüsü (OP)
-    usage: /incele <oyuncu>
+    description: OP'lar için tüm verileri listeler.
+    permission: loginx.view
 permissions:
   loginx.view:
-    description: Oyuncuların loginlerini görebilir
+    description: Verileri görme yetkisi.
     default: op
+
