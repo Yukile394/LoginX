@@ -1,147 +1,173 @@
-package com.loginx;
+package com.hitx;
 
-import org.bukkit.*;
-import org.bukkit.command.*;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
-import org.bukkit.event.*;
-import org.bukkit.event.player.*;
+import org.bukkit.event.Listener;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.SkullMeta;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.CommandExecutor;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.configuration.file.FileConfiguration;
 
-import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.HashMap;
+import java.util.UUID;
 
-public class LoginX extends JavaPlugin implements Listener {
+public class HitX extends JavaPlugin implements Listener {
 
-    private final Map<UUID, String> passwords = new HashMap<>();
-    private final Map<UUID, Integer> attempts = new HashMap<>();
-    private final Map<UUID, Long> cooldown = new HashMap<>();
-    private final Set<UUID> loggedIn = new HashSet<>();
-    private final Map<UUID, String> lastIP = new HashMap<>();
+    private FileConfiguration config;
+    private final HashMap<UUID, String> registered = new HashMap<>();
+    private final HashMap<UUID, Boolean> loggedIn = new HashMap<>();
 
     @Override
     public void onEnable() {
-        Bukkit.getPluginManager().registerEvents(this, this);
         saveDefaultConfig();
-        getLogger().info("LoginX güvenlik sistemi aktif.");
+        this.config = getConfig();
+        getServer().getPluginManager().registerEvents(this, this);
+
+        getCommand("register").setExecutor(new RegisterCommand());
+        getCommand("login").setExecutor(new LoginCommand());
+        getCommand("logingoster").setExecutor(new LoginGosterCommand());
+        getCommand("incele").setExecutor(new InceleCommand());
     }
 
+    // Oyuncu Join
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
-        String ip = p.getAddress().getAddress().getHostAddress();
-
-        if (lastIP.containsKey(p.getUniqueId()) && !lastIP.get(p.getUniqueId()).equals(ip)) {
-            notifyOps(p, "§cIP DEĞİŞTİ!");
+        if(!registered.containsKey(p.getUniqueId())){
+            loggedIn.put(p.getUniqueId(), false);
+            p.sendTitle(config.getString("title.register"), "", 10, 70, 20);
+            p.playSound(p.getLocation(), Sound.valueOf(config.getString("sounds.register_success")), 1, 1);
+        } else {
+            loggedIn.put(p.getUniqueId(), false);
+            p.sendTitle(config.getString("title.login"), "", 10, 70, 20);
         }
-        lastIP.put(p.getUniqueId(), ip);
-
-        p.sendMessage(color("&eLogin için: &f/login <şifre>"));
-        notifyOps(p, "§aOyuncu katıldı: " + p.getName());
     }
 
-    @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player player)) return true;
+    // Chat kısıtlama
+    @EventHandler
+    public void onChat(AsyncPlayerChatEvent e) {
+        if(config.getBoolean("force_login") && !loggedIn.getOrDefault(e.getPlayer().getUniqueId(), false)) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "Önce giriş yapmalısın!");
+        }
+    }
 
-        if (cmd.getName().equalsIgnoreCase("login")) {
-            if (args.length != 1) {
-                player.sendMessage(color("&cKullanım: /login <şifre>"));
+    // Hareket kısıtlama
+    @EventHandler
+    public void onMove(PlayerMoveEvent e) {
+        if(config.getBoolean("force_login") && !loggedIn.getOrDefault(e.getPlayer().getUniqueId(), false)) {
+            e.setCancelled(true);
+        }
+    }
+
+    // Envanter kısıtlama
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent e) {
+        if(config.getBoolean("force_login") && !loggedIn.getOrDefault(((Player)e.getWhoClicked()).getUniqueId(), false)) {
+            e.setCancelled(true);
+        }
+    }
+
+    // /register komutu
+    public class RegisterCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+            if(!(sender instanceof Player p)) return false;
+
+            if(args.length != 2){
+                p.sendMessage(ChatColor.RED + "Kullanım: /register <şifre> <şifre>");
                 return true;
             }
 
-            UUID uuid = player.getUniqueId();
-            long now = System.currentTimeMillis();
-
-            if (cooldown.containsKey(uuid) && now - cooldown.get(uuid) < 2000) {
-                player.sendMessage(color("&cÇok hızlı deniyorsun!"));
+            if(!args[0].equals(args[1])){
+                p.sendMessage(ChatColor.RED + "Şifreler eşleşmiyor!");
                 return true;
             }
 
-            cooldown.put(uuid, now);
-
-            String hashed = hash(args[0]);
-
-            if (!passwords.containsKey(uuid)) {
-                passwords.put(uuid, hashed);
-                loggedIn.add(uuid);
-                player.sendMessage(color("&aKayıt olundu."));
-                notifyOps(player, "§aYeni kayıt: " + player.getName());
-                return true;
-            }
-
-            if (passwords.get(uuid).equals(hashed)) {
-                loggedIn.add(uuid);
-                attempts.put(uuid, 0);
-                player.sendMessage(color("&aBaşarılı giriş!"));
-                notifyOps(player, "§aBaşarılı giriş: " + player.getName());
-            } else {
-                int fail = attempts.getOrDefault(uuid, 0) + 1;
-                attempts.put(uuid, fail);
-                player.sendMessage(color("&cYanlış şifre!"));
-
-                notifyOps(player, "§cBaşarısız deneme: " + player.getName());
-
-                if (fail >= 3) {
-                    player.kickPlayer("§cÇok fazla yanlış deneme!");
-                }
-            }
-
+            registered.put(p.getUniqueId(), args[0]);
+            loggedIn.put(p.getUniqueId(), true);
+            p.sendTitle(config.getString("title.register_success"), "", 10, 70, 20);
+            p.playSound(p.getLocation(), Sound.valueOf(config.getString("sounds.register_success")), 1, 1);
             return true;
         }
+    }
 
-        if (cmd.getName().equalsIgnoreCase("logingoster")) {
-            if (!player.hasPermission("loginx.view")) {
-                player.sendMessage("§cYetkin yok.");
+    // /login komutu
+    public class LoginCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+            if(!(sender instanceof Player p)) return false;
+
+            if(args.length != 1){
+                p.sendMessage(ChatColor.RED + "Kullanım: /login <şifre>");
                 return true;
             }
 
-            if (args.length != 1) {
-                player.sendMessage("/logingoster <oyuncu>");
+            String pw = registered.get(p.getUniqueId());
+            if(pw == null){
+                p.sendMessage(ChatColor.RED + "Önce kayıt olmalısın!");
+                return true;
+            }
+
+            if(!pw.equals(args[0])){
+                p.sendMessage(ChatColor.RED + "Şifre yanlış!");
+                return true;
+            }
+
+            loggedIn.put(p.getUniqueId(), true);
+            p.sendTitle(config.getString("title.login_success"), "", 10, 70, 20);
+            p.playSound(p.getLocation(), Sound.valueOf(config.getString("sounds.login_success")), 1, 1);
+            return true;
+        }
+    }
+
+    // /logingoster komutu
+    public class LoginGosterCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+            if(!sender.hasPermission("hitx.logingoster")){
+                sender.sendMessage(ChatColor.RED + "Yetkin yok!");
+                return true;
+            }
+
+            sender.sendMessage(ChatColor.LIGHT_PURPLE + "---- HitX Login List ----");
+            for(UUID uuid : registered.keySet()){
+                Player p = Bukkit.getPlayer(uuid);
+                String name = p != null ? p.getName() : "Offline";
+                sender.sendMessage(ChatColor.AQUA + name + " | " + ChatColor.LIGHT_PURPLE + registered.get(uuid));
+            }
+            return true;
+        }
+    }
+
+    // /incele komutu
+    public class InceleCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+            if(!sender.hasPermission("hitx.incele")) return true;
+            if(args.length != 1){
+                sender.sendMessage(ChatColor.RED + "Kullanım: /incele <oyuncu>");
                 return true;
             }
 
             OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
-            UUID uuid = target.getUniqueId();
-
-            player.sendMessage("§6==== LoginX Güvenlik Raporu ====");
-            player.sendMessage("§eİsim: §f" + target.getName());
-            player.sendMessage("§eSon IP: §f" + lastIP.getOrDefault(uuid, "Bilinmiyor"));
-            player.sendMessage("§eBaşarısız Deneme: §f" + attempts.getOrDefault(uuid, 0));
-            player.sendMessage("§eKayıtlı mı: §f" + passwords.containsKey(uuid));
-            player.sendMessage("§7LoginX güvenlik sistemi aktif.");
-
+            sender.sendMessage(ChatColor.LIGHT_PURPLE + "--- Bilgi ---");
+            sender.sendMessage(ChatColor.AQUA + "İsim: " + ChatColor.LIGHT_PURPLE + target.getName());
+            sender.sendMessage(ChatColor.AQUA + "UUID: " + ChatColor.LIGHT_PURPLE + target.getUniqueId());
+            sender.sendMessage(ChatColor.AQUA + "Çevrimiçi: " + ChatColor.LIGHT_PURPLE + target.isOnline());
             return true;
         }
-
-        return false;
     }
-
-    private void notifyOps(Player p, String status) {
-        String time = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(new Date());
-        String ip = p.getAddress().getAddress().getHostAddress();
-
-        String msg = "§x§F§F§A§5§0§0L§x§F§F§B§0§0§0o§x§F§F§B§B§0§0g§x§F§F§C§6§0§0i§x§F§F§D§1§0§0n§x§F§F§D§C§0§0X §7| "
-                + "§e" + time + " §7| §b" + p.getName() + " §7| §fIP: " + ip + " §7| " + status;
-
-        for (Player online : Bukkit.getOnlinePlayers()) {
-            if (online.isOp()) online.sendMessage(msg);
-        }
-    }
-
-    private String hash(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = md.digest(input.getBytes());
-            StringBuilder sb = new StringBuilder();
-            for (byte b : bytes) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            return input;
-        }
-    }
-
-    private String color(String s) {
-        return ChatColor.translateAlternateColorCodes('&', s);
-    }
-        }
+}
