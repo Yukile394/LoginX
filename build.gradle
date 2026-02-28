@@ -10,10 +10,11 @@ archivesBaseName = 'LoginX'
 repositories {
     mavenCentral()
     maven { url 'https://repo.papermc.io/repo/repository/maven-public/' }
+    maven { url 'https://oss.sonatype.org/content/repositories/snapshots/' } // SNAPSHOT gerekirse
 }
 
 dependencies {
-    compileOnly 'io.papermc.paper:paper-api:1.21-R0.1'
+    compileOnly 'io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT'
 }
 
 java {
@@ -25,3 +26,5 @@ java {
 tasks.named('jar') {
     archiveClassifier.set('')
 }
+
+// shadowJar zaten plugin tarafından geliyor, manuel task kaldırıldı
