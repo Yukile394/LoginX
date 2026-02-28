@@ -1,33 +1,13 @@
-name: Build LoginX
-
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: gradle
-
-      - name: Grant Execute Permission
-        run: chmod +x gradlew
-
-      - name: Build with Gradle
-        run: ./gradlew build
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LoginX
-          path: build/libs/*.jar
+name: LoginX
+main: com.loginx.LoginX
+version: 1.0.0
+api-version: 1.21
+author: Yukile394
+commands:
+  logingoster:
+    description: Oyuncu girişlerini gösterir
+    usage: /logingoster <oyuncu>
+permissions:
+  loginx.view:
+    description: Oyuncu girişlerini görebilir
+    default: op
