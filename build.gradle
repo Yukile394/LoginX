@@ -5,7 +5,6 @@ plugins {
 
 group = 'com.loginx'
 version = '1.0.0'
-description = 'LoginX Plugin for Paper 1.21'
 
 java {
     toolchain {
@@ -15,11 +14,14 @@ java {
 
 repositories {
     mavenCentral()
+    maven {
+        name = "papermc"
+        url = "https://repo.papermc.io/repository/maven-public/"
+    }
 }
 
 dependencies {
-    // Paper API'yi local jar olarak kullan
-    compileOnly files('libs/paper-api-1.21-R0.1.jar')
+    compileOnly "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
 }
 
 tasks.withType(JavaCompile) {
@@ -27,8 +29,7 @@ tasks.withType(JavaCompile) {
 }
 
 tasks.shadowJar {
-    archiveBaseName.set('LoginX')
-    archiveVersion.set('1.0.0')
-    archiveClassifier.set('')
-    from(sourceSets.main.output)
+    archiveBaseName.set("LoginX")
+    archiveVersion.set("1.0.0")
+    archiveClassifier.set("")
 }
