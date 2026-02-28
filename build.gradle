@@ -26,8 +26,5 @@ tasks.named('jar') {
     archiveClassifier.set('')
 }
 
-tasks.register('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
-    archiveClassifier.set('')
-    from sourceSets.main.output
-    configurations = [project.configurations.runtimeClasspath]
-}
+// Manuel shadowJar task kaldırıldı!
+// Artık sadece plugin’in kendi shadowJar task’ını kullan
