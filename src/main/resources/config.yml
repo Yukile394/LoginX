@@ -1,5 +1,5 @@
-login_timeout: 60 # saniye, login/register yapmazsa atılır
-title_interval: 4 # title spam sayısı
+login_timeout: 60
+title_interval: 4
 title_colors:
   register:
     header: "&d&lKayıt Ol"
@@ -7,6 +7,3 @@ title_colors:
   login:
     header: "&b&lGiriş Yap"
     footer: "&f/login <şifre>"
-  already_logged_in:
-    header: "&aZaten giriş yaptın"
-    footer: "&f"
