@@ -2,7 +2,10 @@ name: Build and Release LoginX
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main         # main branch push → artifact
+    tags:
+      - 'v*'         # v1.0.0 gibi tag push → release
   pull_request:
 
 jobs:
@@ -27,12 +30,14 @@ jobs:
         run: ./gradlew build
 
       - name: Upload Artifact to Actions
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'refs/heads/')
         uses: actions/upload-artifact@v4
         with:
           name: LoginX
           path: build/libs/*.jar
 
       - name: Create GitHub Release
+        if: startsWith(github.ref_name, 'v')
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
@@ -40,6 +45,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Artifact to Release
+        if: startsWith(github.ref_name, 'v')
         uses: softprops/action-gh-release@v1
         with:
           files: build/libs/*.jar
