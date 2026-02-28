@@ -18,6 +18,7 @@ repositories {
 }
 
 dependencies {
+    // Paper API'yi local jar olarak kullan
     compileOnly files('libs/paper-api-1.21-R0.1.jar')
 }
 
@@ -29,6 +30,5 @@ tasks.shadowJar {
     archiveBaseName.set('LoginX')
     archiveVersion.set('1.0.0')
     archiveClassifier.set('')
-    // Düzeltilmiş satır:
     from(sourceSets.main.output)
 }
