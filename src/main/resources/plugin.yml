@@ -1,15 +1,38 @@
-name: LoginX
+name: HitX
 version: 1.0.0
-main: com.loginx.LoginX
+main: com.hitx.HitX
 api-version: 1.21
 commands:
+  register:
+    description: Kayıt ol
+    usage: /register <şifre> <şifre>
+    permission: hitx.register
+    permission-message: "&cBunu yapmaya yetkin yok!"
   login:
-    description: Oyuncu giriş yapar veya kayıt olur
+    description: Giriş yap
     usage: /login <şifre>
+    permission: hitx.login
+    permission-message: "&cBunu yapmaya yetkin yok!"
   logingoster:
-    description: Oyuncuların login bilgilerini gösterir (Sadece yetkililer)
+    description: Oyuncuların girişlerini gösterir
     usage: /logingoster <oyuncu>
+    permission: hitx.logingoster
+    permission-message: "&cBunu yapmaya yetkin yok!"
+  incele:
+    description: Oyuncu incele
+    usage: /incele <oyuncu>
+    permission: hitx.incele
+    permission-message: "&cBunu yapmaya yetkin yok!"
 permissions:
-  loginx.view:
-    description: Oyuncuların loginlerini görebilir
+  hitx.register:
+    description: Kayıt olma yetkisi
+    default: true
+  hitx.login:
+    description: Giriş yapma yetkisi
+    default: true
+  hitx.logingoster:
+    description: Oyuncu loginlerini görme yetkisi
+    default: op
+  hitx.incele:
+    description: Oyuncu bilgilerini inceleme yetkisi
     default: op
