@@ -8,6 +8,7 @@ import org.bukkit.event.player.*;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -21,6 +22,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private final Map<UUID, String> lastIP = new HashMap<>();
     private final Set<UUID> blocked = new HashSet<>();
     private final Map<UUID, Long> joinTime = new HashMap<>();
+    private final Map<UUID, Integer> titleSpamCount = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -37,8 +39,9 @@ public class LoginX extends JavaPlugin implements Listener {
 
         blocked.add(p.getUniqueId());
         joinTime.put(p.getUniqueId(), System.currentTimeMillis());
+        titleSpamCount.put(p.getUniqueId(), 0);
 
-        startTitleAnimation(p);
+        startTitle(p);
 
         notifyOps(p, "&dOyuncu katıldı: " + p.getName());
 
@@ -53,6 +56,29 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskLater(this, 20 * 60); // 1 dakika
     }
 
+    private void startTitle(Player p) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!blocked.contains(p.getUniqueId())) cancel();
+                int spam = titleSpamCount.getOrDefault(p.getUniqueId(), 0);
+                if (spam >= 4) cancel();
+
+                String title;
+                String subtitle;
+                if (!passwords.containsKey(p.getUniqueId())) {
+                    title = color("&dKayıt Ol");
+                    subtitle = color("&f/register <şifre> <şifre>");
+                } else {
+                    title = color("&bGiriş Yap");
+                    subtitle = color("&f/login <şifre>");
+                }
+                p.sendTitle(title, subtitle, 10, 70, 20);
+                titleSpamCount.put(p.getUniqueId(), spam + 1);
+            }
+        }.runTaskTimer(this, 0L, 40L); // 2 saniye arayla
+    }
+
     @EventHandler
     public void onMove(PlayerMoveEvent e) {
         if (blocked.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
@@ -62,7 +88,7 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onInteract(PlayerInteractEvent e) {
         if (blocked.contains(e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
-            e.getPlayer().sendMessage(color("&dRGB Floplu &f: Önce /register veya /login yapmalısın!"));
+            e.getPlayer().sendMessage(color("&cÖnce /register veya /login yapmalısın!"));
         }
     }
 
@@ -71,26 +97,11 @@ public class LoginX extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         if (blocked.contains(p.getUniqueId())) {
             String cmd = e.getMessage().split(" ")[0].toLowerCase();
-            if (!cmd.equals("/login") && !cmd.equals("/register")) {
+            if (!cmd.equals("/login") && !cmd.equals("/register") && !cmd.equals("/logingoster") && !cmd.equals("/incele")) {
                 e.setCancelled(true);
-                p.sendMessage(color("&dRGB Floplu &f: Önce /register veya /login yapmalısın!"));
+                p.sendMessage(color("&cÖnce /register veya /login yapmalısın!"));
             }
         }
-    }
-
-    private void startTitleAnimation(Player p) {
-        new BukkitRunnable() {
-            int i = 0;
-            @Override
-            public void run() {
-                if (!blocked.contains(p.getUniqueId())) cancel();
-                String color1 = String.format("§x§F§F%1$X§F§F%2$X§F§F%3$X", (i%256), ((i+85)%256), ((i+170)%256));
-                String title = color(color1 + "Kayıt Ol /register <şifre> <şifre>");
-                String subtitle = color(color1 + "Veya Giriş Yap /login <şifre>");
-                p.sendTitle(title, subtitle, 10, 70, 20);
-                i += 5;
-            }
-        }.runTaskTimer(this, 0L, 10L);
     }
 
     @Override
@@ -100,6 +111,10 @@ public class LoginX extends JavaPlugin implements Listener {
         long now = System.currentTimeMillis();
 
         if (cmd.getName().equalsIgnoreCase("register")) {
+            if (loggedIn.contains(uuid)) {
+                player.sendMessage(color("&aZaten giriş yaptınız!"));
+                return true;
+            }
             if (args.length != 2) {
                 player.sendMessage(color("&cKullanım: /register <şifre> <şifre>"));
                 return true;
@@ -118,6 +133,10 @@ public class LoginX extends JavaPlugin implements Listener {
         }
 
         if (cmd.getName().equalsIgnoreCase("login")) {
+            if (loggedIn.contains(uuid)) {
+                player.sendMessage(color("&aZaten giriş yaptınız!"));
+                return true;
+            }
             if (args.length != 1) {
                 player.sendMessage(color("&cKullanım: /login <şifre>"));
                 return true;
@@ -129,12 +148,12 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             cooldown.put(uuid, now);
 
-            String hashed = hash(args[0]);
             if (!passwords.containsKey(uuid)) {
                 player.sendMessage(color("&cÖnce /register yapmalısın!"));
                 return true;
             }
 
+            String hashed = hash(args[0]);
             if (passwords.get(uuid).equals(hashed)) {
                 loggedIn.add(uuid);
                 blocked.remove(uuid);
@@ -177,8 +196,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private void notifyOps(Player p, String status) {
         String time = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(new Date());
         String ip = p.getAddress().getAddress().getHostAddress();
-        String msg = "§x§F§F§A§5§0§0L§x§F§F§B§0§0§0o§x§F§F§B§B§0§0g§x§F§F§C§6§0§0i§x§F§F§D§1§0§0n§x§F§F§D§C§0§0X §7| "
-                + "§e" + time + " §7| §b" + p.getName() + " §7| §fIP: " + ip + " §7| " + status;
+        String msg = ChatColor.LIGHT_PURPLE + "[LoginX] " + ChatColor.GOLD + time + " | " + ChatColor.AQUA + p.getName() + " | IP: " + ip + " | " + ChatColor.WHITE + status;
         for (Player online : Bukkit.getOnlinePlayers()) {
             if (online.isOp()) online.sendMessage(msg);
         }
@@ -199,4 +217,4 @@ public class LoginX extends JavaPlugin implements Listener {
     private String color(String s) {
         return ChatColor.translateAlternateColorCodes('&', s);
     }
-}
+                                   }
