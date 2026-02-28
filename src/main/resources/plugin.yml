@@ -1,5 +1,5 @@
 name: LoginX
-version: 1.0.0
+version: 1.1.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
@@ -8,9 +8,13 @@ commands:
   login:
     description: Giriş yapma komutu
   logingoster:
-    description: Verileri listeleme (OP)
-    permission: loginx.view
+    description: Verileri menüde listeleme (OP)
+    permission: loginx.admin
+  sifredegis:
+    description: Bir oyuncunun veya kendi şifreni değiştir (OP)
+    usage: /sifredegis <oyuncu> <yeni_şifre>
+    permission: loginx.admin
 permissions:
-  loginx.view:
-    description: Tüm loginleri görme yetkisi
+  loginx.admin:
+    description: LoginX sistemini yönetme yetkisi
     default: op
