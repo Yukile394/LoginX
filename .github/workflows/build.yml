@@ -3,9 +3,9 @@ name: Build and Release LoginX
 on:
   push:
     branches:
-      - main         # main branch push → artifact
+      - main        # main branch push → artifact
     tags:
-      - 'v*'         # v1.0.0 gibi tag push → release
+      - 'v*'        # v1.0.0 gibi tag push → release
   pull_request:
 
 jobs:
@@ -26,8 +26,8 @@ jobs:
       - name: Grant Execute Permission
         run: chmod +x gradlew
 
-      - name: Build with Gradle
-        run: ./gradlew build
+      - name: Build Shadow Jar
+        run: ./gradlew shadowJar
 
       - name: Upload Artifact to Actions
         if: github.ref_name == 'main' || startsWith(github.ref_name, 'refs/heads/')
