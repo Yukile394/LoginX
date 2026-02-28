@@ -1,6 +1,21 @@
-# LoginX Config - Güvenlik ayarları
-settings:
-  max_attempts: 3        # Maksimum yanlış şifre denemesi
-  login_cooldown: 2000   # ms cinsinden login deneme gecikmesi
-  show_login_messages_to_ops: true # OP’lar chatten loginleri görebilsin mi
-  log_color: "&x&F&F&A&5&0"  # OP mesaj RGB başlangıç rengi (flop-style)
+# Renkler (RGB Flop)
+colors:
+  primary: "#FF56A1"
+  secondary: "#FFA6C1"
+  success: "#FFB0E0"
+  error: "#FF5555"
+
+# Sesler
+sounds:
+  register_success: "ENTITY_PLAYER_LEVELUP"
+  login_success: "ENTITY_EXPERIENCE_ORB_PICKUP"
+
+# Title & ActionBar ayarları
+title:
+  register: "§dKayıt Ol §f/register <şifre> <şifre>"
+  login: "§dGiriş Yap §f/login <şifre>"
+  register_success: "§dBaşarıyla kayıt oldun!"
+  login_success: "§dBaşarıyla giriş yaptın!"
+
+# Login güvenlik
+force_login: true
