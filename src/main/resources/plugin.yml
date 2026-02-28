@@ -1,19 +1,19 @@
 name: LoginX
-version: 1.0.1
+version: 1.0.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
-  login:
-    description: Giriş yap
-    usage: /login <şifre>
   register:
     description: Kayıt ol
     usage: /register <şifre> <şifre>
+  login:
+    description: Giriş yap
+    usage: /login <şifre>
   logingoster:
-    description: Oyuncu login bilgilerini gösterir (Ops)
+    description: Oyuncu login bilgilerini gösterir (OP)
     usage: /logingoster <oyuncu>
   incele:
-    description: Oyuncu bilgilerini opslar görebilir
+    description: Oyuncu inceleme menüsü (OP)
     usage: /incele <oyuncu>
 permissions:
   loginx.view:
