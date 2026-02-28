@@ -1,0 +1,16 @@
+name: LoginX
+version: 1.0
+main: com.loginx.LoginX
+api-version: 1.21
+author: LoginX
+description: Secure login monitor system.
+
+commands:
+  logingoster:
+    description: Oyuncunun login geçmişini gösterir
+    usage: /logingoster <oyuncu>
+    permission: loginx.log
+
+permissions:
+  loginx.log:
+    default: op
