@@ -1,0 +1,12 @@
+name: LoginX
+version: 1.0.0
+main: com.loginx.LoginX
+api-version: 1.21
+commands:
+  logingoster:
+    description: Oyuncu girişlerini gösterir
+    usage: /logingoster <player>
+permissions:
+  loginx.view:
+    description: Oyuncuların loginlerini görebilir
+    default: op
