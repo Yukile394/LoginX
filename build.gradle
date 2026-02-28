@@ -1,26 +1,33 @@
 plugins {
     id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 group = 'com.loginx'
 version = '1.0.0'
+archivesBaseName = 'LoginX'
 
 repositories {
     mavenCentral()
-    maven {
-        name = "papermc"
-        url = "https://repo.papermc.io/repository/maven-public/"
-    }
+    maven { url 'https://papermc.io/repo/repository/maven-public/' }
 }
 
 dependencies {
-    compileOnly "io.papermc.paper:paper-api:1.21-R0.1-SNAPSHOT"
+    compileOnly 'io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT'
 }
 
 java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
+tasks.named('jar') {
+    archiveClassifier.set('')
+}
+
+tasks.register('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    archiveClassifier.set('')
+    from sourceSets.main.output
+    configurations = [project.configurations.runtimeClasspath]
 }
