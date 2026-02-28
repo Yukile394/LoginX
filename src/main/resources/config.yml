@@ -4,8 +4,4 @@ title-join:
   fade-in: 10
   stay: 70
   fade-out: 20
-title-login-success:
-  fade-in: 10
-  stay: 70
-  fade-out: 20
 kick-timeout: 60
