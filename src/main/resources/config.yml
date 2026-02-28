@@ -2,8 +2,8 @@ login_timeout: 60
 title_interval: 4
 title_colors:
   register:
-    header: "&d&lKayıt Ol"
-    footer: "&f/register <şifre> <şifre>"
+    header: "&d&lKAYIT OL"
+    footer: "&7Sisteme kayıt için: /register <sifre> <sifre>"
   login:
-    header: "&b&lGiriş Yap"
-    footer: "&f/login <şifre>"
+    header: "&b&lGIRIS YAP"
+    footer: "&7Devam etmek için: /login <sifre>"
