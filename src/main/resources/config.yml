@@ -1,0 +1,6 @@
+# LoginX Config - Güvenlik ayarları
+settings:
+  max_attempts: 3        # Maksimum yanlış şifre denemesi
+  login_cooldown: 2000   # ms cinsinden login deneme gecikmesi
+  show_login_messages_to_ops: true # OP’lar chatten loginleri görebilsin mi
+  log_color: "&x&F&F&A&5&0"  # OP mesaj RGB başlangıç rengi (flop-style)
