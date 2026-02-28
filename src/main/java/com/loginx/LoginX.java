@@ -22,116 +22,151 @@ import java.util.UUID;
 
 public class HitX extends JavaPlugin implements Listener {
 
-    private File configFile;
     private FileConfiguration config;
-    private final HashMap<UUID, String> logins = new HashMap<>();
-    private final HashMap<UUID, Boolean> loggedIn = new HashMap<>();
+    private File configFile;
+    private HashMap<UUID, String> passwords = new HashMap<>();
+    private HashMap<UUID, Boolean> loggedIn = new HashMap<>();
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
-        configFile = new File(getDataFolder(), "config.yml");
-        config = YamlConfiguration.loadConfiguration(configFile);
-
-        Bukkit.getPluginManager().registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(this, this);
         this.getCommand("register").setExecutor(new RegisterCommand());
         this.getCommand("login").setExecutor(new LoginCommand());
         this.getCommand("logingoster").setExecutor(new LoginGosterCommand());
-
+        this.getCommand("incele").setExecutor(new InceleCommand());
+        loadConfig();
         getLogger().info("HitX aktif edildi!");
     }
 
-    @Override
-    public void onDisable() {
-        getLogger().info("HitX kapatıldı!");
+    private void loadConfig() {
+        configFile = new File(getDataFolder(), "config.yml");
+        if (!configFile.exists()) {
+            saveResource("config.yml", false);
+        }
+        config = YamlConfiguration.loadConfiguration(configFile);
     }
 
-    // Oyuncu join
+    public boolean isLoggedIn(Player player) {
+        return loggedIn.getOrDefault(player.getUniqueId(), false);
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         loggedIn.put(p.getUniqueId(), false);
-
-        p.sendTitle(ChatColor.LIGHT_PURPLE + "Kayıt Ol",
-                ChatColor.translateAlternateColorCodes('&', "/register şifre şifre"),
-                10, 70, 20);
-        p.sendMessage(ChatColor.LIGHT_PURPLE + "Sunucuya giriş yaptın. Lütfen kaydol veya giriş yap!");
+        p.sendTitle(ChatColor.LIGHT_PURPLE + "Kayıt Ol /register şifre şifre",
+                    ChatColor.GRAY + "Sunucuya giriş için şifre belirleyin",
+                    10, 70, 20);
+        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
     }
 
-    // Hareket engelleme login olmadan
     @EventHandler
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
-        if (!loggedIn.getOrDefault(p.getUniqueId(), false)) {
+        if (!isLoggedIn(p)) {
             e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "Önce /login veya /register ile giriş yapmalısınız!");
         }
     }
 
-    // /register komutu
-    private class RegisterCommand implements CommandExecutor {
+    // --- COMMANDS ---
+
+    class RegisterCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-            if (!(sender instanceof Player p)) return false;
+            if (!(sender instanceof Player player)) return true;
             if (args.length != 2) {
-                p.sendMessage(ChatColor.RED + "Kullanım: /register <şifre> <şifre>");
-                return false;
+                player.sendMessage(ChatColor.RED + "Kullanım: /register <şifre> <şifre>");
+                return true;
             }
-            String sifre1 = args[0];
-            String sifre2 = args[1];
-            if (!sifre1.equals(sifre2)) {
-                p.sendMessage(ChatColor.RED + "Şifreler uyuşmuyor!");
-                return false;
+            String şifre1 = args[0];
+            String şifre2 = args[1];
+            if (!şifre1.equals(şifre2)) {
+                player.sendMessage(ChatColor.RED + "Şifreler uyuşmuyor!");
+                return true;
             }
-            logins.put(p.getUniqueId(), sifre1);
-            loggedIn.put(p.getUniqueId(), true);
-            p.sendTitle(ChatColor.LIGHT_PURPLE + "Başarıyla kayıt oldun!", "", 10, 70, 20);
-            p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+            passwords.put(player.getUniqueId(), şifre1);
+            loggedIn.put(player.getUniqueId(), true);
+            player.sendTitle(ChatColor.LIGHT_PURPLE + "Başarıyla kayıt oldunuz!", "",
+                    10, 70, 20);
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+            savePasswords();
             return true;
         }
     }
 
-    // /login komutu
-    private class LoginCommand implements CommandExecutor {
+    class LoginCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-            if (!(sender instanceof Player p)) return false;
+            if (!(sender instanceof Player player)) return true;
             if (args.length != 1) {
-                p.sendMessage(ChatColor.RED + "Kullanım: /login <şifre>");
-                return false;
+                player.sendMessage(ChatColor.RED + "Kullanım: /login <şifre>");
+                return true;
             }
-            String sifre = args[0];
-            String kayıtlı = logins.get(p.getUniqueId());
-            if (kayıtlı == null) {
-                p.sendMessage(ChatColor.RED + "Önce /register ile kaydol!");
-                return false;
+            String şifre = args[0];
+            if (!passwords.containsKey(player.getUniqueId())) {
+                player.sendMessage(ChatColor.RED + "Önce /register ile kayıt olun!");
+                return true;
             }
-            if (!kayıtlı.equals(sifre)) {
-                p.sendMessage(ChatColor.RED + "Şifre yanlış!");
-                return false;
+            if (!passwords.get(player.getUniqueId()).equals(şifre)) {
+                player.sendMessage(ChatColor.RED + "Şifre yanlış!");
+                return true;
             }
-            loggedIn.put(p.getUniqueId(), true);
-            p.sendTitle(ChatColor.GREEN + "Başarıyla giriş yaptın!", "", 10, 70, 20);
-            p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+            loggedIn.put(player.getUniqueId(), true);
+            player.sendTitle(ChatColor.LIGHT_PURPLE + "Başarıyla giriş yaptınız!", "",
+                    10, 70, 20);
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+            Bukkit.getOnlinePlayers().forEach(p -> {
+                if (p.hasPermission("hitx.view")) {
+                    p.sendMessage(ChatColor.translateAlternateColorCodes('&',
+                            "&d&lTarih &f| &d&l" + player.getName() + " &f| &d&lLogin: " + şifre));
+                }
+            });
             return true;
         }
     }
 
-    // /logingoster komutu (yetkililere özel)
-    private class LoginGosterCommand implements CommandExecutor {
+    class LoginGosterCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-            if (!sender.hasPermission("hitx.view")) {
-                sender.sendMessage(ChatColor.RED + "Yetkin yok!");
-                return false;
-            }
-            sender.sendMessage(ChatColor.LIGHT_PURPLE + "=== LoginX Logları ===");
-            for (UUID id : logins.keySet()) {
-                Player p = Bukkit.getPlayer(id);
-                String name = (p != null) ? p.getName() : "Offline";
-                String sifre = logins.get(id);
-                sender.sendMessage(ChatColor.LIGHT_PURPLE + "Oyuncu: " + name + " | Şifre: " + sifre);
-            }
+            if (!sender.hasPermission("hitx.view")) return true;
+            passwords.forEach((uuid, şifre) -> {
+                Player p = Bukkit.getPlayer(uuid);
+                String name = (p != null) ? p.getName() : "OfflinePlayer";
+                sender.sendMessage(ChatColor.translateAlternateColorCodes('&',
+                        "&d&lTarih &f| &d&l" + name + " &f| &d&lLogin: " + şifre));
+            });
             return true;
         }
     }
-}
+
+    class InceleCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+            if (!(sender instanceof Player player)) return true;
+            if (args.length != 1) {
+                player.sendMessage(ChatColor.RED + "Kullanım: /incele <oyuncu>");
+                return true;
+            }
+            Player hedef = Bukkit.getPlayer(args[0]);
+            if (hedef == null) {
+                player.sendMessage(ChatColor.RED + "Oyuncu bulunamadı!");
+                return true;
+            }
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "Oyuncu " + hedef.getName() +
+                    " hakkında bilgi:");
+            // İleride daha detaylı bilgi ekleyebilirsiniz
+            return true;
+        }
+    }
+
+    private void savePasswords() {
+        try {
+            YamlConfiguration yml = new YamlConfiguration();
+            passwords.forEach((uuid, pass) -> yml.set(uuid.toString(), pass));
+            yml.save(new File(getDataFolder(), "passwords.yml"));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+                }
