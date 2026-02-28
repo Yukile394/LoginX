@@ -9,11 +9,11 @@ archivesBaseName = 'LoginX'
 
 repositories {
     mavenCentral()
-    maven { url 'https://papermc.io/repo/repository/maven-public/' }
+    maven { url 'https://repo.papermc.io/repo/repository/maven-public/' }
 }
 
 dependencies {
-    compileOnly 'io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT'
+    compileOnly 'io.papermc.paper:paper-api:1.21-R0.1'
 }
 
 java {
@@ -25,6 +25,3 @@ java {
 tasks.named('jar') {
     archiveClassifier.set('')
 }
-
-// Manuel shadowJar task kaldırıldı!
-// Artık sadece plugin’in kendi shadowJar task’ını kullan
