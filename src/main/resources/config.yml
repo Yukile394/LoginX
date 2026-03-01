@@ -2,8 +2,11 @@ login_timeout: 60
 title_interval: 4
 title_colors:
   register:
-    header: "&d&lKAYIT OL"
-    footer: "&7Sisteme kayıt için: /register <sifre> <sifre>"
+    header: "&#FF69B4&lKAYIT OL"
+    footer: "&#FFB6C1&oSisteme kayıt için: /register <sifre> <sifre>"
   login:
-    header: "&b&lGIRIS YAP"
-    footer: "&7Devam etmek için: /login <sifre>"
+    header: "&#00FFFF&lGIRIS YAP"
+    footer: "&#E0FFFF&oDevam etmek için: /login <sifre>"
+
+# Aşağıdaki liste Konsol üzerinden /izinver kullanıldıkça otomatik dolar
+trusted_players: []
