@@ -38,10 +38,13 @@ public class LoginX extends JavaPlugin implements Listener {
     
     // --- ANTİ-HİLE (ANTI-CHEAT) VERİLERİ ---
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
-    private final Map<UUID, Long> lastChatTime = new HashMap<>();
-    private final Map<UUID, Long> lastInventoryClick = new HashMap<>();
+    private final Map<UUID, Long> lastOffhandClick = new HashMap<>();
+    
+    // İHLAL (VIOLATION) SİSTEMİ: Lag yüzünden haksız atılmaları önler
+    private final Map<UUID, Map<String, Integer>> violations = new HashMap<>();
+    
     private final int MAX_CPS = 16; 
-    private final double MAX_REACH = 4.5; // Ping payı bırakıldı
+    private final double MAX_REACH = 4.3; // Gözden göze maksimum mesafe
 
     private FileConfiguration cfg;
     private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
@@ -53,7 +56,14 @@ public class LoginX extends JavaPlugin implements Listener {
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX ULTRA GÜVENLİK & ANTİ-HİLE Aktif!");
+        
+        // Her 3 dakikada bir oyuncuların ihlal puanlarını (lag kaynaklıları) temizle
+        new BukkitRunnable() {
+            @Override
+            public void run() { violations.clear(); }
+        }.runTaskTimer(this, 3600L, 3600L);
+        
+        getLogger().info("LoginX ULTRA GÜVENLİK & GELİŞMİŞ ANTİ-HİLE Aktif! (Hatasız Sürüm)");
     }
 
     @Override
@@ -130,8 +140,8 @@ public class LoginX extends JavaPlugin implements Listener {
         UUID u = e.getPlayer().getUniqueId();
         loggedIn.remove(u);
         clickData.remove(u); 
-        lastChatTime.remove(u);
-        lastInventoryClick.remove(u);
+        lastOffhandClick.remove(u);
+        violations.remove(u);
     }
 
     private void sendLoginTitle(Player p) {
@@ -150,7 +160,6 @@ public class LoginX extends JavaPlugin implements Listener {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         
-        // KONSOL ÖZEL KOMUTLARI: /izinver & /izinengelle
         if (cmd.getName().equalsIgnoreCase("izinver") || cmd.getName().equalsIgnoreCase("izinengelle")) {
             if (!(sender instanceof ConsoleCommandSender)) {
                 sender.sendMessage(color("&#FF0000[!] Bu komut sadece KONSOL üzerinden kullanılabilir!"));
@@ -269,6 +278,19 @@ public class LoginX extends JavaPlugin implements Listener {
 
     // --- HİLE KORUMASI (ANTI-CHEAT) MOTORU ---
 
+    private void addViolation(Player p, String cheatName, int maxVL) {
+        UUID uuid = p.getUniqueId();
+        violations.putIfAbsent(uuid, new HashMap<>());
+        Map<String, Integer> pViolations = violations.get(uuid);
+        int currentVL = pViolations.getOrDefault(cheatName, 0) + 1;
+        pViolations.put(cheatName, currentVL);
+
+        if (currentVL >= maxVL) {
+            pViolations.put(cheatName, 0); // Sıfırla
+            kickCheater(p, cheatName);
+        }
+    }
+
     private void kickCheater(Player p, String reason) {
         new BukkitRunnable() {
             @Override
@@ -276,7 +298,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 p.kickPlayer(color("&#FF0000[LoginX Anti-Cheat]\n\n&fSistemimizde yasa dışı bir yazılım/hareket tespit edildi.\n\n&#FF69B4Sebep: &e" + reason));
                 Bukkit.broadcastMessage(color("&#FF0000[Anti-Cheat] &e" + p.getName() + " &cadlı oyuncu sunucudan atıldı! &8(&7" + reason + "&8)"));
             }
-        }.runTask(this); // Ana thread'de kick atılmalı
+        }.runTask(this);
     }
 
     // 1. OTO-TIKLAYICI (Makro/CPS Koruması)
@@ -289,7 +311,7 @@ public class LoginX extends JavaPlugin implements Listener {
         clicks.removeIf(time -> now - time > 1000);
         
         if (clicks.size() > MAX_CPS) {
-            kickCheater(p, "Auto-Clicker / Makro Tespit Edildi (" + clicks.size() + " CPS)");
+            addViolation(p, "Auto-Clicker / Makro", 3); // 3 Kere sınırı aşarsa at
             return true; 
         }
         return false;
@@ -304,80 +326,82 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // 2. REACH (Mesafe), HITBOX VE AIMASSIST/TRIGGERBOT KORUMASI
+    // 2. REACH, HITBOX VE KILLAURA KORUMASI (Göz Mesafesi ile Lag Korumalı)
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onDamageDeal(EntityDamageByEntityEvent e) {
         if (!(e.getDamager() instanceof Player p)) return;
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-        
         if (checkCPS(p)) { e.setCancelled(true); return; }
 
-        double distance = p.getLocation().distance(e.getEntity().getLocation());
+        Location eyeLoc = p.getEyeLocation();
+        Location targetLoc = e.getEntity().getLocation();
         
-        // Reach (Mesafe) Kontrolü
+        // Gözden Hedefin merkezine olan mesafe (Eski ayak mesafesine göre çok daha doğru)
+        double distance = eyeLoc.distance(targetLoc);
+        
+        // Reach Kontrolü (Sınır aşıldıysa anında iptal et, 3 defa yaparsa at)
         if (distance > MAX_REACH) {
             e.setCancelled(true);
-            kickCheater(p, "Reach / Hitbox (Mesafeden Vurma Hilesi)");
+            addViolation(p, "Reach / Hitboxes (Uzak Vuruş)", 3);
             return;
         }
 
-        // AimAssist / TriggerBot / Aura Kontrolü (Vektörel Açı Hesaplama)
-        // Eğer hedef çok ters bir açıdaysa (arkası dönük vuruyorsa) atar.
-        Vector dir = p.getLocation().getDirection();
-        Vector toTarget = e.getEntity().getLocation().toVector().subtract(p.getLocation().toVector()).normalize();
+        // KillAura / AimAssist Kontrolü (Baktığı yön ile hedefin yönü uyuşuyor mu?)
+        Vector dir = eyeLoc.getDirection().normalize();
+        Vector toTarget = targetLoc.clone().subtract(eyeLoc).toVector().normalize();
         double dot = dir.dot(toTarget);
         
-        if (dot < 0.0 && distance > 1.5) { // 0.0 demek 90 dereceden fazla sapma var demektir (Arkasına vuruyor)
+        // Mesafesi 2 bloktan fazlayken 70 dereceden (dot < 0.35) daha ters bir açıya vuruyorsa hiledir.
+        if (distance > 2.0 && dot < 0.35) {
             e.setCancelled(true);
-            kickCheater(p, "KillAura / TriggerBot (Baktığın Yön Uyumsuz)");
+            addViolation(p, "KillAura / AimAssist (İmkansız Açı)", 4); // Lag payı için 4 ihlal hakkı
         }
     }
 
-    // 3. AĞ İÇİ YÜRÜME (Phase / Spider / Fly) KORUMASI
+    // 3. AĞ İÇİ YÜRÜME VE FLY (Sadece Survival Modunda Çalışır)
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-
         if (e.getTo() == null) return;
 
-        // Hız (Speed/Fly) Kontrolü
-        double yDiff = e.getTo().getY() - e.getFrom().getY();
-        double distStr = e.getFrom().distance(e.getTo());
-        
-        // Yukarı doğru imkansız bir zıplama (Fly) veya aşırı yatay hız
-        if (yDiff > 0.85 || (distStr > 0.9 && p.getFallDistance() == 0 && !p.isGliding())) {
-            kickCheater(p, "Speed / Fly (Aşırı Hızlı Hareket)");
-            return;
+        // GMC (Yaratıcı) veya İzleyici modundaysa, ya da uçma yetkisi varsa korumayı Kapat!
+        if (p.getGameMode() == GameMode.CREATIVE || p.getGameMode() == GameMode.SPECTATOR || p.getAllowFlight()) return;
+
+        // Speed Kontrolü (Yatay Hız)
+        double distXZ = Math.sqrt(Math.pow(e.getTo().getX() - e.getFrom().getX(), 2) + Math.pow(e.getTo().getZ() - e.getFrom().getZ(), 2));
+        if (distXZ > 0.85 && p.getFallDistance() == 0 && !p.isGliding() && !p.isInsideVehicle() && !p.hasPotionEffect(PotionEffectType.SPEED)) {
+            addViolation(p, "Speed (Hızlı Yürüme)", 5);
         }
 
-        // Katı Blok İçinden Geçme (Phase/Noclip)
+        // Phase (Blok İçi Geçme)
         Material m = e.getTo().getBlock().getType();
         if (m.isSolid() && !m.isInteractable() && m != Material.COBWEB && m != Material.LANTERN && !m.toString().contains("DOOR") && !m.toString().contains("STAIR") && !m.toString().contains("SLAB")) {
-            // Tamamen katı bir bloğun içine girmeye çalıştıysa
             Location eyeLoc = p.getEyeLocation();
             if (eyeLoc.getBlock().getType().isSolid() && !eyeLoc.getBlock().getType().isInteractable()) {
-                kickCheater(p, "Phase / Noclip (Blokların İçinden Geçme)");
+                addViolation(p, "Phase / Noclip", 3);
             }
         }
     }
 
-    // 4. AUTOTOTEM / AUTOARMOR KORUMASI
+    // 4. HATASIZ AUTOTOTEM / AUTOARMOR KORUMASI
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
 
-        long now = System.currentTimeMillis();
-        long lastClick = lastInventoryClick.getOrDefault(p.getUniqueId(), 0L);
-        
-        // Eğer iki envanter işlemi arasında 20 milisaniyeden az zaman varsa bu bir insana ait olamaz! (AutoTotem)
-        if (now - lastClick < 20) {
-            e.setCancelled(true);
-            kickCheater(p, "AutoTotem / AutoArmor (İnsanüstü Envanter Hızı)");
-            return;
+        // Sadece sol el (Offhand = Slot 40) veya hızlı giyme durumlarını denetle
+        if (e.getSlot() == 40) {
+            long now = System.currentTimeMillis();
+            long lastClick = lastOffhandClick.getOrDefault(p.getUniqueId(), 0L);
+            
+            // İki sol el değişimi arasında 15 milisaniyeden az fark varsa bu bir bottur.
+            if (now - lastClick < 15) {
+                e.setCancelled(true);
+                addViolation(p, "AutoTotem / AutoArmor", 2); // 2 defa yaparsa at (lag payı)
+            }
+            lastOffhandClick.put(p.getUniqueId(), now);
         }
-        lastInventoryClick.put(p.getUniqueId(), now);
     }
 
     // 5. ANTI-GRIEF VE TEMEL KORUMALAR
@@ -432,12 +456,4 @@ public class LoginX extends JavaPlugin implements Listener {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
         Matcher matcher = pattern.matcher(text);
         StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            String hex = matcher.group(1);
-            StringBuilder replacement = new StringBuilder("§x");
-            for (char c : hex.toCharArray()) replacement.append("§").append(c);
-            matcher.appendReplacement(buffer, replacement.toString());
-        }
-        return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
-    }
-}
+        
