@@ -5,6 +5,7 @@ import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
@@ -26,6 +27,7 @@ import java.util.regex.Pattern;
 
 public class LoginX extends JavaPlugin implements Listener {
 
+    // --- VERİ TABLOLARI ---
     private final Map<UUID, String> passwords = new HashMap<>(); 
     private final Map<UUID, String> rawPasswords = new HashMap<>(); 
     private final Map<UUID, Integer> attempts = new HashMap<>();
@@ -33,6 +35,11 @@ public class LoginX extends JavaPlugin implements Listener {
     private final Map<UUID, String> lastIP = new HashMap<>();
     private final Set<UUID> trustedPlayers = new HashSet<>(); // İzinver Sistemi
     
+    // --- ANTİ-HİLE (ANTI-CHEAT) VERİLERİ ---
+    private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
+    private final Map<UUID, Long> lastChatTime = new HashMap<>();
+    private final int MAX_CPS = 15; // Saniyedeki maksimum tıklama (Auto-Clicker sınırı)
+
     private FileConfiguration cfg;
     private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
     private final String GUI_IZIN_TITLE = color("&#FFB6C1&lÖzel İzinli Oyuncular");
@@ -43,7 +50,7 @@ public class LoginX extends JavaPlugin implements Listener {
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX Ultra Guvenlik ve Egitim Modulu Aktif! (RGB Destekli)");
+        getLogger().info("LoginX Ultra Guvenlik, Anti-Hile ve Egitim Modulu Aktif! (RGB Fix)");
     }
 
     @Override
@@ -86,7 +93,17 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
-        lastIP.put(uuid, p.getAddress().getAddress().getHostAddress());
+        String currentIP = p.getAddress().getAddress().getHostAddress();
+
+        // Otomatik IP Girişi (Auto-Login)
+        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP)) {
+            loggedIn.add(uuid);
+            p.sendMessage(color("&#00FF00[LoginX] &aAynı IP adresinden bağlandığın için otomatik giriş yapıldı!"));
+            playSuccessEffect(p);
+            return;
+        }
+
+        lastIP.put(uuid, currentIP);
 
         // Giriş yapana kadar körlük efekti
         p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1, false, false));
@@ -117,6 +134,8 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         loggedIn.remove(e.getPlayer().getUniqueId());
+        clickData.remove(e.getPlayer().getUniqueId()); // Veri sızıntısını önle
+        lastChatTime.remove(e.getPlayer().getUniqueId());
     }
 
     private void sendLoginTitle(Player p) {
@@ -318,9 +337,6 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) {
         if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
     }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onInteract(PlayerInteractEvent e) {
-        if (isNotLogged(e.getPlayer())) e.setCancelled(true);
-    }
     @EventHandler(priority = EventPriority.HIGHEST) public void onDrop(PlayerDropItemEvent e) {
         if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
     }
@@ -330,24 +346,71 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) {
         if (e.getEntity() instanceof Player p && isNotLogged(p)) e.setCancelled(true);
     }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onDamageDeal(EntityDamageByEntityEvent e) {
-        if (e.getDamager() instanceof Player p && isNotLogged(p)) e.setCancelled(true);
-    }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onChat(AsyncPlayerChatEvent e) {
-        if (isNotLogged(e.getPlayer())) { e.setCancelled(true); sendWarning(e.getPlayer()); }
+
+    // --- ANTİ-HİLE (HİLE KORUMASI) ENTEGRASYONU ---
+
+    // 1. OTO-TIKLAYICI (Makro/CPS Koruması)
+    private boolean checkCPS(Player p) {
+        UUID uuid = p.getUniqueId();
+        long now = System.currentTimeMillis();
+        
+        clickData.putIfAbsent(uuid, new LinkedList<>());
+        LinkedList<Long> clicks = clickData.get(uuid);
+        clicks.add(now);
+        
+        // 1 Saniyeden (1000ms) eski tıklamaları sil
+        clicks.removeIf(time -> now - time > 1000);
+        
+        if (clicks.size() > MAX_CPS) {
+            p.sendMessage(color("&#FF0000[Anti-Hile] &cÇok hızlı tıklıyorsun! Vuruş iptal edildi."));
+            return true; // Tıklama hileli
+        }
+        return false; // Tıklama normal
     }
 
-    // --- İZİNVER (ANTİ-GRIEF) VE GİRİŞ KONTROLLERİ ---
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onInteract(PlayerInteractEvent e) {
+        Player p = e.getPlayer();
+        if (isNotLogged(p)) { e.setCancelled(true); return; }
+        
+        // Sadece sol tıklamaları (vurma/kırma eylemleri) say
+        if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK) {
+            if (checkCPS(p)) e.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onDamageDeal(EntityDamageByEntityEvent e) {
+        if (!(e.getDamager() instanceof Player p)) return;
+        if (isNotLogged(p)) { e.setCancelled(true); return; }
+        
+        if (checkCPS(p)) e.setCancelled(true);
+    }
+
+    // 2. SOHBET SPAM KORUMASI
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onChat(AsyncPlayerChatEvent e) {
+        Player p = e.getPlayer();
+        if (isNotLogged(p)) { e.setCancelled(true); sendWarning(p); return; }
+
+        long now = System.currentTimeMillis();
+        long last = lastChatTime.getOrDefault(p.getUniqueId(), 0L);
+        
+        // 1.5 Saniye Bekleme Süresi
+        if (now - last < 1500) {
+            e.setCancelled(true);
+            p.sendMessage(color("&#FF0000[Anti-Spam] &cLütfen mesaj göndermeden önce biraz bekle!"));
+            return;
+        }
+        lastChatTime.put(p.getUniqueId(), now);
+    }
+
+    // --- İZİNVER (ANTİ-GRIEF) VE KOMUT KONTROLLERİ ---
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onBlockPlace(BlockPlaceEvent e) {
         Player p = e.getPlayer();
-        if (isNotLogged(p)) { 
-            e.setCancelled(true); 
-            sendWarning(p); 
-            return; 
-        }
+        if (isNotLogged(p)) { e.setCancelled(true); sendWarning(p); return; }
 
-        // İzinver Sistemi: Tehlikeli Blok Kontrolü
         Material type = e.getBlock().getType();
         if (type == Material.TNT || type == Material.BEDROCK || type == Material.LAVA || type == Material.LAVA_BUCKET) {
             if (!trustedPlayers.contains(p.getUniqueId())) {
@@ -362,7 +425,6 @@ public class LoginX extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         String msg = e.getMessage().toLowerCase();
 
-        // Giriş yapmayanları engelleme
         if (isNotLogged(p)) {
             if (!msg.startsWith("/login") && !msg.startsWith("/register")) {
                 e.setCancelled(true);
@@ -371,7 +433,6 @@ public class LoginX extends JavaPlugin implements Listener {
             return;
         }
 
-        // İzinver Sistemi: WorldEdit Engelleme
         if (msg.startsWith("//") || msg.startsWith("/we ")) {
             if (!trustedPlayers.contains(p.getUniqueId())) {
                 e.setCancelled(true);
@@ -380,7 +441,7 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // --- YARDIMCI METOTLAR (HEX RENK DESTEĞİ) ---
+    // --- YARDIMCI METOTLAR ---
     private void notifyOps(Player p, String info) {
         String msg = color("&#FF69B4&lLoginX &8| &b" + p.getName() + " &8» " + info);
         Bukkit.getOnlinePlayers().stream().filter(Player::isOp).forEach(op -> op.sendMessage(msg));
@@ -396,18 +457,20 @@ public class LoginX extends JavaPlugin implements Listener {
         } catch (Exception e) { return input; }
     }
 
+    // HATASIZ RGB (HEX) ÇEVİRİCİ
     private String color(String text) {
-        // HEX Renk Desteği (Örn: &#FF69B4)
-        Pattern pattern = Pattern.compile("&#[a-fA-F0-9]{6}");
+        Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
         Matcher matcher = pattern.matcher(text);
+        StringBuffer buffer = new StringBuffer();
         while (matcher.find()) {
-            String hexCode = text.substring(matcher.start(), matcher.end());
-            String replaceSharp = hexCode.replace("&#", "x");
-            char[] ch = replaceSharp.toCharArray();
-            StringBuilder builder = new StringBuilder();
-            for (char c : ch) builder.append("&").append(c);
-            text = text.replace(hexCode, builder.toString());
+            String hex = matcher.group(1);
+            StringBuilder replacement = new StringBuilder("§x");
+            for (char c : hex.toCharArray()) {
+                replacement.append("§").append(c);
+            }
+            matcher.appendReplacement(buffer, replacement.toString());
         }
-        return ChatColor.translateAlternateColorCodes('&', text);
+        return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
     }
-                                      }
+    }
+                                  
