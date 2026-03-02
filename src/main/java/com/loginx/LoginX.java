@@ -41,7 +41,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
     private final Map<UUID, LinkedList<Long>> invClickData = new HashMap<>();
     private final int MAX_CPS = 16; 
-    private final double MAX_REACH = 4.2; // Ping ve hareket payı eklendi
+    private final double MAX_REACH = 4.2;
 
     private FileConfiguration cfg;
     private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
@@ -171,7 +171,8 @@ public class LoginX extends JavaPlugin implements Listener {
             return true;
         }
 
-        if (!(sender instanceof Player player)) return true;
+        if (!(sender instanceof Player)) return true;
+        Player player = (Player) sender;
         UUID uuid = player.getUniqueId();
 
         if (cmd.getName().equalsIgnoreCase("register")) {
@@ -286,7 +287,6 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTask(this); 
     }
 
-    // 1. OTO-TIKLAYICI (Makro/CPS Koruması)
     private boolean checkCPS(Player p) {
         UUID uuid = p.getUniqueId();
         long now = System.currentTimeMillis();
@@ -311,30 +311,26 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // 2. REACH (Mesafe), HITBOX VE AIMASSIST/TRIGGERBOT KORUMASI
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onDamageDeal(EntityDamageByEntityEvent e) {
-        if (!(e.getDamager() instanceof Player p)) return;
+        if (!(e.getDamager() instanceof Player)) return;
+        Player p = (Player) e.getDamager();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
         
         if (checkCPS(p)) { e.setCancelled(true); return; }
 
-        // Hedefin merkez noktasını alarak daha keskin hitbox hesaplaması
         double targetHeight = e.getEntity() instanceof LivingEntity ? ((LivingEntity) e.getEntity()).getEyeHeight() / 2 : 1.0;
         Location targetCenter = e.getEntity().getLocation().add(0, targetHeight, 0);
         Location playerEye = p.getEyeLocation();
         
         double distance = playerEye.distance(targetCenter);
         
-        // Reach (Mesafe) Kontrolü (Gözden merkeze)
         if (distance > MAX_REACH && p.getGameMode() == GameMode.SURVIVAL) {
             e.setCancelled(true);
             kickCheater(p, "Reach / Hitbox (Anormal Mesafe Vuruşu)");
             return;
         }
 
-        // AimAssist / KillAura / TriggerBot (Vektörel Sapma Hilesi)
-        // 0.65 Dot Product = ~50 derece sapma toleransı (Kafası başka yere dönükken vuranları yakalar)
         Vector dir = playerEye.getDirection().normalize();
         Vector toTarget = targetCenter.toVector().subtract(playerEye.toVector()).normalize();
         double dot = dir.dot(toTarget);
@@ -345,23 +341,19 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // 3. AĞ İÇİ YÜRÜME (Phase / Spider / Fly) KORUMASI
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
         if (e.getTo() == null) return;
 
-        // Fly koruması: Sadece Survival/Adventure modunda ve uçuş izni yoksa çalışır.
         if (p.getGameMode() == GameMode.CREATIVE || p.getGameMode() == GameMode.SPECTATOR || p.getAllowFlight() || p.isFlying()) return;
         
-        // Suda yüzme veya zıplama desteği varsa geç
         if (p.hasPotionEffect(PotionEffectType.JUMP) || e.getFrom().getBlock().getType().toString().contains("WATER") || e.getTo().getBlock().getType().toString().contains("WATER")) return;
 
         double yDiff = e.getTo().getY() - e.getFrom().getY();
         double distStr = Math.sqrt(Math.pow(e.getTo().getX() - e.getFrom().getX(), 2) + Math.pow(e.getTo().getZ() - e.getFrom().getZ(), 2));
         
-        // Hız (Speed/Fly) Kontrolü (Merdiven ve slab töleransı eklendi)
         Material blockType = e.getTo().getBlock().getType();
         boolean onStairsOrSlab = blockType.toString().contains("STAIR") || blockType.toString().contains("SLAB") || blockType.toString().contains("SCAFFOLD");
 
@@ -375,7 +367,6 @@ public class LoginX extends JavaPlugin implements Listener {
             return;
         }
 
-        // Katı Blok İçinden Geçme (Phase/Noclip)
         Material m = blockType;
         if (m.isSolid() && !m.isInteractable() && m != Material.COBWEB && m != Material.LANTERN && !m.toString().contains("DOOR") && !m.toString().contains("STAIR") && !m.toString().contains("SLAB")) {
             Location eyeLoc = p.getEyeLocation();
@@ -385,30 +376,27 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // 4. AUTOTOTEM / AUTOARMOR KORUMASI
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryClick(InventoryClickEvent e) {
-        if (!(e.getWhoClicked() instanceof Player p)) return;
+        if (!(e.getWhoClicked() instanceof Player)) return;
+        Player p = (Player) e.getWhoClicked();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
 
-        // Paket (Ping) birikmelerini önlemek için milisaniye yerine, kısa süredeki işlem sayısını ölçeriz.
         UUID uuid = p.getUniqueId();
         long now = System.currentTimeMillis();
         
         invClickData.putIfAbsent(uuid, new LinkedList<>());
         LinkedList<Long> clicks = invClickData.get(uuid);
         clicks.add(now);
-        clicks.removeIf(time -> now - time > 500); // Son yarım saniyedeki tıklamaları tut
+        clicks.removeIf(time -> now - time > 500); 
         
-        // Bir insan yarım saniyede envanterde 8'den fazla işlem yapamaz (Shift-click dahil)
         if (clicks.size() > 8) {
             e.setCancelled(true);
-            clicks.clear(); // Flood kick atmaması için temizle
+            clicks.clear(); 
             kickCheater(p, "AutoTotem / AutoArmor (İnsanüstü Envanter Hızı)");
         }
     }
 
-    // 5. ANTI-GRIEF VE TEMEL KORUMALAR
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onBlockPlace(BlockPlaceEvent e) {
         Player p = e.getPlayer();
@@ -441,8 +429,40 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onDrop(PlayerDropItemEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) { if (e.getEntity() instanceof Player p && !loggedIn.contains(p.getUniqueId())) e.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onBlockBreak(BlockBreakEvent e) { 
+        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); 
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onDrop(PlayerDropItemEvent e) { 
+        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); 
+    }
+    
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onDamage(EntityDamageEvent e) { 
+        if (e.getEntity() instanceof Player) {
+            Player p = (Player) e.getEntity();
+            if (!loggedIn.contains(p.getUniqueId())) e.setCancelled(true);
+        }
+    }
 
-    // -
+    private String hash(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = md.digest(input.getBytes());
+            StringBuilder sb = new StringBuilder();
+            for (byte b : bytes) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) { return input; }
+    }
+
+    private String color(String text) {
+        Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String hex = matcher.group(1);
+            StringBuilder replacement = new StringBuilder("§x");
+            for (char c : hex.toCharArray()) replacement.append("§").append(c);
+            matcher.appendReplacement(buffer, replac
