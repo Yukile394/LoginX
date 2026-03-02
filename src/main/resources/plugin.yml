@@ -1,5 +1,5 @@
 name: LoginX
-version: 1.3.0
+version: 1.4.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
@@ -15,8 +15,11 @@ commands:
     usage: /sifredegis <oyuncu> <yeni_şifre>
     permission: loginx.admin
   izinver:
-    description: Özel eşya ve WorldEdit izni verme/alma (SADECE KONSOL)
+    description: Özel eşya ve WorldEdit izni verir (SADECE KONSOL)
     usage: /izinver <oyuncu>
+  izinengelle:
+    description: Özel izni oyuncudan geri alır (SADECE KONSOL)
+    usage: /izinengelle <oyuncu>
   izinvermenu:
     description: Güvenilir oyuncuları listeler (OP)
     permission: loginx.admin
