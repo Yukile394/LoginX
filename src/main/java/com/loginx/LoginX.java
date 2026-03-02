@@ -41,7 +41,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
     private final Map<UUID, LinkedList<Long>> invClickData = new HashMap<>();
     private final int MAX_CPS = 16; 
-    private final double MAX_REACH = 4.2;
+    private final double MAX_REACH = 4.3;
 
     private FileConfiguration cfg;
     private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
@@ -265,7 +265,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (e.getView().getTitle().equals(GUI_LOGIN_TITLE) || e.getView().getTitle().equals(GUI_IZIN_TITLE)) e.setCancelled(true);
     }
 
-    // --- ANTİ-HİLE MOTORU ---
+    // --- ANTI-CHEAT ---
 
     private void kickCheater(Player p, String reason) {
         new BukkitRunnable() {
@@ -294,7 +294,6 @@ public class LoginX extends JavaPlugin implements Listener {
         LinkedList<Long> clicks = clickData.get(uuid);
         clicks.add(now);
         clicks.removeIf(time -> now - time > 1000);
-        
         if (clicks.size() > MAX_CPS) {
             kickCheater(p, "Auto-Clicker / Makro (" + clicks.size() + " CPS)");
             return true; 
@@ -316,14 +315,12 @@ public class LoginX extends JavaPlugin implements Listener {
         if (!(e.getDamager() instanceof Player)) return;
         Player p = (Player) e.getDamager();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-        
         if (checkCPS(p)) { e.setCancelled(true); return; }
 
         double targetHeight = e.getEntity() instanceof LivingEntity ? ((LivingEntity) e.getEntity()).getEyeHeight() / 2 : 1.0;
         Location targetCenter = e.getEntity().getLocation().add(0, targetHeight, 0);
-        Location playerEye = p.getEyeLocation();
-        
-        double distance = playerEye.distance(targetCenter);
+        Location pEye = p.getEyeLocation();
+        double distance = pEye.distance(targetCenter);
         
         if (distance > MAX_REACH && p.getGameMode() == GameMode.SURVIVAL) {
             e.setCancelled(true);
@@ -331,11 +328,9 @@ public class LoginX extends JavaPlugin implements Listener {
             return;
         }
 
-        Vector dir = playerEye.getDirection().normalize();
-        Vector toTarget = targetCenter.toVector().subtract(playerEye.toVector()).normalize();
-        double dot = dir.dot(toTarget);
-        
-        if (dot < 0.65 && distance > 1.8) { 
+        Vector dir = pEye.getDirection().normalize();
+        Vector toTarget = targetCenter.toVector().subtract(pEye.toVector()).normalize();
+        if (dir.dot(toTarget) < 0.60 && distance > 1.8) { 
             e.setCancelled(true);
             kickCheater(p, "KillAura / AimAssist (Baktığın Yön Uyumsuz)");
         }
@@ -345,33 +340,22 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-        if (e.getTo() == null) return;
-
-        if (p.getGameMode() == GameMode.CREATIVE || p.getGameMode() == GameMode.SPECTATOR || p.getAllowFlight() || p.isFlying()) return;
+        if (e.getTo() == null || p.getGameMode() != GameMode.SURVIVAL || p.isFlying() || p.getAllowFlight()) return;
         
-        if (p.hasPotionEffect(PotionEffectType.JUMP) || e.getFrom().getBlock().getType().toString().contains("WATER") || e.getTo().getBlock().getType().toString().contains("WATER")) return;
+        if (p.hasPotionEffect(PotionEffectType.JUMP) || e.getFrom().getBlock().getType().toString().contains("WATER")) return;
 
         double yDiff = e.getTo().getY() - e.getFrom().getY();
-        double distStr = Math.sqrt(Math.pow(e.getTo().getX() - e.getFrom().getX(), 2) + Math.pow(e.getTo().getZ() - e.getFrom().getZ(), 2));
+        double dist = Math.sqrt(Math.pow(e.getTo().getX() - e.getFrom().getX(), 2) + Math.pow(e.getTo().getZ() - e.getFrom().getZ(), 2));
         
-        Material blockType = e.getTo().getBlock().getType();
-        boolean onStairsOrSlab = blockType.toString().contains("STAIR") || blockType.toString().contains("SLAB") || blockType.toString().contains("SCAFFOLD");
-
-        if (!onStairsOrSlab && yDiff > 0.85 && p.getVelocity().getY() < 0.5) {
-            kickCheater(p, "Fly / Spider (Geçersiz Yükselme)");
-            return;
+        if (yDiff > 0.86 && p.getVelocity().getY() < 0.4) {
+            kickCheater(p, "Fly / Spider (Hatalı Yükselme)");
+        } else if (dist > 0.95 && p.getFallDistance() == 0 && !p.isSprinting() && !p.hasPotionEffect(PotionEffectType.SPEED)) {
+            kickCheater(p, "Speed (Hızlı Hareket)");
         }
         
-        if (distStr > 0.9 && p.getFallDistance() == 0 && !p.isGliding() && !p.isSprinting() && !p.hasPotionEffect(PotionEffectType.SPEED)) {
-            kickCheater(p, "Speed (Aşırı Hızlı Hareket)");
-            return;
-        }
-
-        if (blockType.isSolid() && !blockType.isInteractable() && blockType != Material.COBWEB && blockType != Material.LANTERN && !blockType.toString().contains("DOOR") && !blockType.toString().contains("STAIR") && !blockType.toString().contains("SLAB")) {
-            Location eyeLoc = p.getEyeLocation();
-            if (eyeLoc.getBlock().getType().isSolid() && !eyeLoc.getBlock().getType().isInteractable()) {
-                kickCheater(p, "Phase / Noclip (Blokların İçinden Geçme)");
-            }
+        Material m = e.getTo().getBlock().getType();
+        if (m.isSolid() && !m.toString().contains("SLAB") && !m.toString().contains("STAIR") && !m.toString().contains("DOOR")) {
+            if (p.getEyeLocation().getBlock().getType().isSolid()) kickCheater(p, "Phase / Noclip (Blok İçi)");
         }
     }
 
@@ -383,16 +367,14 @@ public class LoginX extends JavaPlugin implements Listener {
 
         UUID uuid = p.getUniqueId();
         long now = System.currentTimeMillis();
-        
         invClickData.putIfAbsent(uuid, new LinkedList<>());
         LinkedList<Long> clicks = invClickData.get(uuid);
         clicks.add(now);
         clicks.removeIf(time -> now - time > 500); 
         
-        if (clicks.size() > 8) {
+        if (clicks.size() > 9) {
             e.setCancelled(true);
-            clicks.clear(); 
-            kickCheater(p, "AutoTotem / AutoArmor (İnsanüstü Envanter Hızı)");
+            kickCheater(p, "AutoTotem / AutoArmor (Hızlı Envanter)");
         }
     }
 
@@ -400,13 +382,10 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onBlockPlace(BlockPlaceEvent e) {
         Player p = e.getPlayer();
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-
         Material type = e.getBlock().getType();
-        if (type == Material.TNT || type == Material.BEDROCK || type == Material.LAVA || type == Material.LAVA_BUCKET) {
-            if (!trustedPlayers.contains(p.getUniqueId())) {
-                e.setCancelled(true);
-                p.sendMessage(color("&#FF0000[!] &cBu bloğu koymak için Konsol yetkisi gerekiyor!"));
-            }
+        if ((type == Material.TNT || type == Material.BEDROCK || type == Material.LAVA) && !trustedPlayers.contains(p.getUniqueId())) {
+            e.setCancelled(true);
+            p.sendMessage(color("&#FF0000[!] &cBu blok için özel izin gerekiyor!"));
         }
     }
 
@@ -414,37 +393,19 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onCommandProcess(PlayerCommandPreprocessEvent e) {
         Player p = e.getPlayer();
         String msg = e.getMessage().toLowerCase();
-
         if (!loggedIn.contains(p.getUniqueId())) {
             if (!msg.startsWith("/login") && !msg.startsWith("/register")) e.setCancelled(true);
             return;
         }
-
-        if (msg.startsWith("//") || msg.startsWith("/we ")) {
-            if (!trustedPlayers.contains(p.getUniqueId())) {
-                e.setCancelled(true);
-                p.sendMessage(color("&#FF0000[!] &cWorldEdit kullanmak için Konsol yetkisi gerekiyor!"));
-            }
+        if ((msg.startsWith("//") || msg.startsWith("/we ")) && !trustedPlayers.contains(p.getUniqueId())) {
+            e.setCancelled(true);
+            p.sendMessage(color("&#FF0000[!] &cWorldEdit izniniz yok!"));
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST) 
-    public void onBlockBreak(BlockBreakEvent e) { 
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); 
-    }
-    
-    @EventHandler(priority = EventPriority.HIGHEST) 
-    public void onDrop(PlayerDropItemEvent e) { 
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); 
-    }
-    
-    @EventHandler(priority = EventPriority.HIGHEST) 
-    public void onDamage(EntityDamageEvent e) { 
-        if (e.getEntity() instanceof Player) {
-            Player p = (Player) e.getEntity();
-            if (!loggedIn.contains(p.getUniqueId())) e.setCancelled(true);
-        }
-    }
+    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDrop(PlayerDropItemEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) { if (e.getEntity() instanceof Player && !loggedIn.contains(e.getEntity().getUniqueId())) e.setCancelled(true); }
 
     private String hash(String input) {
         try {
@@ -464,4 +425,8 @@ public class LoginX extends JavaPlugin implements Listener {
             String hex = matcher.group(1);
             StringBuilder replacement = new StringBuilder("§x");
             for (char c : hex.toCharArray()) replacement.append("§").append(c);
-            matcher.appendReplacement(buffer,
+            matcher.appendReplacement(buffer, replacement.toString());
+        }
+        return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
+    }
+}
