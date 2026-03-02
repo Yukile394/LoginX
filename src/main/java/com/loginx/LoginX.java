@@ -265,7 +265,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (e.getView().getTitle().equals(GUI_LOGIN_TITLE) || e.getView().getTitle().equals(GUI_IZIN_TITLE)) e.setCancelled(true);
     }
 
-    // --- HİLE KORUMASI (ANTI-CHEAT) MOTORU ---
+    // --- ANTİ-HİLE MOTORU ---
 
     private void kickCheater(Player p, String reason) {
         new BukkitRunnable() {
@@ -367,8 +367,7 @@ public class LoginX extends JavaPlugin implements Listener {
             return;
         }
 
-        Material m = blockType;
-        if (m.isSolid() && !m.isInteractable() && m != Material.COBWEB && m != Material.LANTERN && !m.toString().contains("DOOR") && !m.toString().contains("STAIR") && !m.toString().contains("SLAB")) {
+        if (blockType.isSolid() && !blockType.isInteractable() && blockType != Material.COBWEB && blockType != Material.LANTERN && !blockType.toString().contains("DOOR") && !blockType.toString().contains("STAIR") && !blockType.toString().contains("SLAB")) {
             Location eyeLoc = p.getEyeLocation();
             if (eyeLoc.getBlock().getType().isSolid() && !eyeLoc.getBlock().getType().isInteractable()) {
                 kickCheater(p, "Phase / Noclip (Blokların İçinden Geçme)");
@@ -465,4 +464,4 @@ public class LoginX extends JavaPlugin implements Listener {
             String hex = matcher.group(1);
             StringBuilder replacement = new StringBuilder("§x");
             for (char c : hex.toCharArray()) replacement.append("§").append(c);
-            matcher.appendReplacement(buffer, replac
+            matcher.appendReplacement(buffer,
