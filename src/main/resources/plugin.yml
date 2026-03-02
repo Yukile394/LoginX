@@ -20,6 +20,12 @@ commands:
   izinengelle:
     description: Özel izni oyuncudan geri alır (SADECE KONSOL)
     usage: /izinengelle <oyuncu>
+  baltaizinver:
+    description: Oyuncuya balta kullanma izni verir (SADECE KONSOL)
+    usage: /baltaizinver <oyuncu>
+  baltaizincikar:
+    description: Oyuncunun balta kullanma iznini alır (SADECE KONSOL)
+    usage: /baltaizincikar <oyuncu>
   izinvermenu:
     description: Güvenilir oyuncuları listeler (OP)
     permission: loginx.admin
@@ -27,4 +33,3 @@ permissions:
   loginx.admin:
     description: LoginX sistemini yönetme yetkisi
     default: op
-    
