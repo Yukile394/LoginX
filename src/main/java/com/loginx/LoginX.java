@@ -7,16 +7,12 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.*;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.util.Vector;
 
 import java.security.MessageDigest;
 import java.util.*;
@@ -27,26 +23,22 @@ public class LoginX extends JavaPlugin implements Listener {
 
     protected final Map<UUID, String> passwords = new HashMap<>(); 
     protected final Map<UUID, String> rawPasswords = new HashMap<>(); 
-    protected final Map<UUID, Integer> attempts = new HashMap<>();
     protected final Set<UUID> loggedIn = new HashSet<>();
     protected final Map<UUID, String> lastIP = new HashMap<>();
-    protected final Set<UUID> trustedPlayers = new HashSet<>(); // İzinver Sistemi
+    protected final Set<UUID> trustedPlayers = new HashSet<>(); 
     
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
-    private final Map<UUID, Long> lastChatTime = new HashMap<>();
-    private final int MAX_CPS = 15; // Saniyedeki maksimum tıklama (Auto-Clicker sınırı)
+    private final int MAX_CPS = 15;
 
     private FileConfiguration cfg;
 
     @Override
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
-        // LoginX2'yi sisteme bağla
         Bukkit.getPluginManager().registerEvents(new LoginX2(this), this);
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX Ana Sistem Aktif!");
     }
 
     @Override
@@ -61,9 +53,6 @@ public class LoginX extends JavaPlugin implements Listener {
                 lastIP.put(u, cfg.getString("data." + key + ".ip"));
             }
         }
-        if (cfg.contains("trusted_players")) {
-            for (String uuidStr : cfg.getStringList("trusted_players")) trustedPlayers.add(UUID.fromString(uuidStr));
-        }
     }
 
     public void saveData() {
@@ -73,7 +62,6 @@ public class LoginX extends JavaPlugin implements Listener {
             cfg.set("data." + u + ".raw", rawPasswords.get(u));
             cfg.set("data." + u + ".ip", lastIP.get(u));
         }
-        cfg.set("trusted_players", new ArrayList<>(trustedPlayers.stream().map(UUID::toString).toList()));
         saveConfig();
     }
 
@@ -81,52 +69,16 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
-        String currentIP = p.getAddress().getAddress().getHostAddress();
-        if (passwords.containsKey(uuid) && Objects.equals(lastIP.get(uuid), currentIP)) {
+        if (passwords.containsKey(uuid) && Objects.equals(lastIP.get(uuid), p.getAddress().getAddress().getHostAddress())) {
             loggedIn.add(uuid);
-            p.sendMessage(color("&#00FF00[LoginX] &aOtomatik giriş yapıldı!"));
             return;
         }
-        lastIP.put(uuid, currentIP);
         p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1));
-        new BukkitRunnable() {
-            int count = 0;
-            public void run() {
-                if (loggedIn.contains(uuid) || !p.isOnline()) { cancel(); return; }
-                p.sendTitle(color(cfg.getString("title_colors.login.header")), color(cfg.getString("title_colors.login.footer")), 10, 40, 10);
-            }
-        }.runTaskTimer(this, 0, 40L);
-    }
-
-    // --- HİLE KORUMALARI (CPS & REACH) ---
-    private boolean checkCPS(Player p) {
-        UUID uuid = p.getUniqueId();
-        long now = System.currentTimeMillis();
-        clickData.putIfAbsent(uuid, new LinkedList<>());
-        LinkedList<Long> clicks = clickData.get(uuid);
-        clicks.add(now);
-        clicks.removeIf(time -> now - time > 1000);
-        return clicks.size() > MAX_CPS;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onInteract(PlayerInteractEvent e) {
         if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
-        if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK) {
-            if (checkCPS(e.getPlayer())) e.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onDamage(EntityDamageByEntityEvent e) {
-        if (e.getDamager() instanceof Player p) {
-            if (!loggedIn.contains(p.getUniqueId())) e.setCancelled(true);
-            if (checkCPS(p)) e.setCancelled(true);
-            
-            double targetHeight = e.getEntity() instanceof LivingEntity ? ((LivingEntity) e.getEntity()).getEyeHeight() / 2 : 1.0;
-            Location targetCenter = e.getEntity().getLocation().add(0, targetHeight, 0);
-            if (p.getEyeLocation().distance(targetCenter) > 4.3 && p.getGameMode() == GameMode.SURVIVAL) e.setCancelled(true);
-        }
     }
 
     public String color(String text) {
@@ -151,4 +103,4 @@ public class LoginX extends JavaPlugin implements Listener {
             return sb.toString();
         } catch (Exception e) { return input; }
     }
-    }
+}
