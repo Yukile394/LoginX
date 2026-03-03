@@ -27,12 +27,12 @@ public class LoginX2 implements Listener, CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!sender.hasPermission("loginx.admin")) return true;
-        if (args.length < 1) { sender.sendMessage(plugin.color("&#FFB6C1Kullanım: /" + label + " <oyuncu> <süre> <sebep>")); return true; }
+        if (args.length < 1) { sender.sendMessage(plugin.color("&#FF0000Kullanım: /" + label + " <oyuncu> <süre> <sebep>")); return true; }
 
         String targetName = args[0];
         OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
         long duration = (args.length > 1) ? parseTime(args[1]) : -1;
-        String reason = (args.length > 2) ? String.join(" ", Arrays.copyOfRange(args, 2, args.length)) : "Kural İhlali";
+        String reason = (args.length > 2) ? String.join(" ", Arrays.copyOfRange(args, 2, args.length)) : "Kurallara Aykırı Hareket";
         long expiry = (duration == -1) ? -1 : System.currentTimeMillis() + duration;
 
         switch (cmd.getName().toLowerCase()) {
@@ -40,14 +40,14 @@ public class LoginX2 implements Listener, CommandExecutor {
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId() + ".reason", reason);
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId() + ".expiry", expiry);
                 plugin.saveConfig();
-                announce("BAN", targetName, sender.getName(), reason, args.length > 1 ? args[1] : "Süresiz");
-                if (target.isOnline()) ((Player) target).kickPlayer(plugin.color("&#FF0000Banlandınız!"));
+                announcePunishment("BAN", targetName, sender.getName(), reason, args.length > 1 ? args[1] : "Süresiz");
+                if (target.isOnline()) ((Player) target).kickPlayer(punishKickScreen("Sunucu Erişimi Kapatıldı!", reason, staff, args.length > 1 ? args[1] : "Süresiz"));
                 break;
             case "mute":
                 plugin.getConfig().set("punishments.mutes." + target.getUniqueId() + ".reason", reason);
                 plugin.getConfig().set("punishments.mutes." + target.getUniqueId() + ".expiry", expiry);
                 plugin.saveConfig();
-                announce("MUTE", targetName, sender.getName(), reason, args.length > 1 ? args[1] : "Süresiz");
+                announcePunishment("MUTE", targetName, sender.getName(), reason, args.length > 1 ? args[1] : "Süresiz");
                 break;
             case "unban":
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId(), null);
@@ -58,7 +58,23 @@ public class LoginX2 implements Listener, CommandExecutor {
         return true;
     }
 
-    private void announce(String type, String target, String staff, String reason, String time) {
+    // --- CEZA EKRANI (FOTOĞRAFTAKİ YER - CANAVAR MESAJ) ---
+    private String punishKickScreen(String title, String reason, String staff, String time) {
+        return plugin.color(
+            "&8&m----------------------------------------\n" +
+            "&#FF1493&l⚡ LOGINX SHIELD ⚡\n\n" +
+            "&#FF69B4" + title + "\n\n" +
+            "&#FFB6C1► Yasaklanan: &fSunucudan Uzaklaştırıldınız!\n" +
+            "&#FFB6C1► Sebep: &e" + reason + "\n" +
+            "&#FFB6C1► Yetkili: &f" + staff + "\n" +
+            "&#FFB6C1► Süre: &e" + time + "\n\n" +
+            "&7&o[Kuralları okumak için Discord adresimizi ziyaret et: discord.gg/loginx]\n" +
+            "&7&o[Unban başvurusu açmak için yetkililer ile iletişime geçin]\n" +
+            "&8&m----------------------------------------"
+        );
+    }
+
+    private void announcePunishment(String type, String target, String staff, String reason, String time) {
         String line = plugin.color("&#FF69B4&m----------------------------------------");
         Bukkit.broadcastMessage("");
         Bukkit.broadcastMessage(line);
@@ -89,24 +105,32 @@ public class LoginX2 implements Listener, CommandExecutor {
         return -1;
     }
 
+    // --- AUTOTOTEM / AUTOARMOR KORUMASI ---
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         long now = System.currentTimeMillis();
-        if (now - lastInventoryClick.getOrDefault(p.getUniqueId(), 0L) < 20) {
+        
+        // 15 milisaniyeden hızlı tıklama insanüstüdür (AutoTotem tespiti)
+        if (now - lastInventoryClick.getOrDefault(p.getUniqueId(), 0L) < 15) {
             e.setCancelled(true);
-            new BukkitRunnable() { @Override public void run() { p.kickPlayer(plugin.color("&#FF0000AutoTotem Tespit Edildi!")); } }.runTask(plugin);
+            new BukkitRunnable() {
+                @Override
+                public void run() { p.kickPlayer(plugin.color("&#FF0000[LoginX Shield]\n\n&fTespit: &eAutoTotem/Macro (İnsanüstü Hız)")); }
+            }.runTask(plugin);
         }
         lastInventoryClick.put(p.getUniqueId(), now);
     }
 
     @EventHandler
-    public void onPreLogin(AsyncPlayerPreLoginEvent e) {
+    public void onLoginCheck(AsyncPlayerPreLoginEvent e) {
         String path = "punishments.bans." + e.getUniqueId();
         if (plugin.getConfig().contains(path)) {
-            long exp = plugin.getConfig().getLong(path + ".expiry");
-            if (exp != -1 && exp < System.currentTimeMillis()) { plugin.getConfig().set(path, null); plugin.saveConfig(); return; }
-            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, plugin.color("&#FF0000Banlısınız! Sebep: " + plugin.getConfig().getString(path + ".reason")));
+            long expiry = plugin.getConfig().getLong(path + ".expiry");
+            if (expiry != -1 && expiry < System.currentTimeMillis()) {
+                plugin.getConfig().set(path, null); plugin.saveConfig(); return;
+            }
+            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, punishKickScreen("Yasaklama Süreniz Devam Ediyor!", plugin.getConfig().getString(path + ".reason"), "LoginX Shield", ChatColor.stripColor(plugin.color("&7[&oHâlâ yasaklısınız&r&7]"))));
         }
     }
 
@@ -114,11 +138,12 @@ public class LoginX2 implements Listener, CommandExecutor {
     public void onChat(AsyncPlayerChatEvent e) {
         String path = "punishments.mutes." + e.getPlayer().getUniqueId();
         if (plugin.getConfig().contains(path)) {
-            long exp = plugin.getConfig().getLong(path + ".expiry");
-            if (exp != -1 && exp < System.currentTimeMillis()) { plugin.getConfig().set(path, null); plugin.saveConfig(); return; }
+            long expiry = plugin.getConfig().getLong(path + ".expiry");
+            if (expiry != -1 && expiry < System.currentTimeMillis()) {
+                plugin.getConfig().set(path, null); plugin.saveConfig(); return;
+            }
             e.setCancelled(true);
-            e.getPlayer().sendMessage(plugin.color("&#FF0000Mutelisiniz!"));
+            e.getPlayer().sendMessage(plugin.color("&#FF0000Mutelisiniz! Sebep: " + plugin.getConfig().getString(path + ".reason")));
         }
     }
-                               }
-                
+}
