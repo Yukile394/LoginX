@@ -29,34 +29,23 @@ public class LoginX extends JavaPlugin implements Listener {
 
     protected final Map<UUID, String> passwords = new HashMap<>(); 
     protected final Map<UUID, String> rawPasswords = new HashMap<>(); 
-    protected final Map<UUID, Integer> attempts = new HashMap<>();
     protected final Set<UUID> loggedIn = new HashSet<>();
     protected final Map<UUID, String> lastIP = new HashMap<>();
     protected final Set<UUID> trustedPlayers = new HashSet<>(); 
     protected final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
-    
-    private FileConfiguration cfg;
-    private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
-    private final String GUI_IZIN_TITLE = color("&#FFB6C1&lÖzel İzinli Oyuncular");
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        cfg = getConfig();
         loadData();
-        
-        // ANA OLAYLAR
         Bukkit.getPluginManager().registerEvents(this, this);
-        // İKİNCİ DOSYAYI (ANTI-CHEAT) BAĞLA
+        // LoginX2'yi (Moderasyon ve AutoTotem) bağla
         Bukkit.getPluginManager().registerEvents(new LoginX2(this), this);
-        
-        getLogger().info("LoginX & LoginX2 (Anti-Cheat) başarıyla yüklendi!");
+        getLogger().info("LoginX Sistemleri Aktif!");
     }
 
-    @Override
-    public void onDisable() { saveData(); }
-
     private void loadData() {
+        FileConfiguration cfg = getConfig();
         if (cfg.contains("data")) {
             for (String key : cfg.getConfigurationSection("data").getKeys(false)) {
                 UUID u = UUID.fromString(key);
@@ -66,13 +55,12 @@ public class LoginX extends JavaPlugin implements Listener {
             }
         }
         if (cfg.contains("trusted_players")) {
-            for (String uuidStr : cfg.getStringList("trusted_players")) {
-                trustedPlayers.add(UUID.fromString(uuidStr));
-            }
+            for (String uuidStr : cfg.getStringList("trusted_players")) trustedPlayers.add(UUID.fromString(uuidStr));
         }
     }
 
-    private void saveData() {
+    public void saveData() {
+        FileConfiguration cfg = getConfig();
         cfg.set("data", null);
         for (UUID u : passwords.keySet()) {
             cfg.set("data." + u + ".hash", passwords.get(u));
@@ -86,60 +74,65 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
-        UUID uuid = p.getUniqueId();
         String currentIP = p.getAddress().getAddress().getHostAddress();
-        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP)) {
-            loggedIn.add(uuid);
-            p.sendMessage(color("&#00FF00[LoginX] &aOtomatik giriş yapıldı!"));
-            playSuccessEffect(p);
+        if (passwords.containsKey(p.getUniqueId()) && Objects.equals(lastIP.get(p.getUniqueId()), currentIP)) {
+            loggedIn.add(p.getUniqueId());
+            p.sendMessage(color("&#00FF00[LoginX] &aAynı IP adresinden bağlandığın için otomatik giriş yapıldı!"));
+            p.removePotionEffect(PotionEffectType.BLINDNESS);
             return;
         }
-        lastIP.put(uuid, currentIP);
+        lastIP.put(p.getUniqueId(), currentIP);
         p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1));
         new BukkitRunnable() {
             int count = 0;
             public void run() {
-                if (loggedIn.contains(uuid) || !p.isOnline()) { cancel(); return; }
-                sendLoginTitle(p);
-                if (++count > cfg.getInt("login_timeout") / 2) { /* uyarı eklenebilir */ }
+                if (loggedIn.contains(p.getUniqueId()) || !p.isOnline()) { cancel(); return; }
+                String type = !passwords.containsKey(p.getUniqueId()) ? "register" : "login";
+                p.sendTitle(color(getConfig().getString("title_colors." + type + ".header")), color(getConfig().getString("title_colors." + type + ".footer")), 10, 40, 10);
+                if (++count > getConfig().getInt("login_timeout")) p.kickPlayer(color("&#FF0000Süre doldu!"));
             }
         }.runTaskTimer(this, 0, 40L);
     }
 
-    @EventHandler public void onQuit(PlayerQuitEvent e) { loggedIn.remove(e.getPlayer().getUniqueId()); clickData.remove(e.getPlayer().getUniqueId()); }
+    // --- TEMEL HİLE KORUMALARI ---
+    @EventHandler
+    public void onMove(PlayerMoveEvent e) {
+        Player p = e.getPlayer();
+        if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
+        if (p.getGameMode() != GameMode.SURVIVAL || p.isFlying()) return;
 
-    private void sendLoginTitle(Player p) {
-        String type = !passwords.containsKey(p.getUniqueId()) ? "register" : "login";
-        p.sendTitle(color(cfg.getString("title_colors." + type + ".header")), color(cfg.getString("title_colors." + type + ".footer")), 10, 40, 10);
+        double yDiff = e.getTo().getY() - e.getFrom().getY();
+        if (yDiff > 0.8 && p.getVelocity().getY() < 0.1) {
+            e.setCancelled(true);
+            p.kickPlayer(color("&#FF0000Fly Tespit Edildi!"));
+        }
     }
 
-    private void playSuccessEffect(Player p) {
-        p.removePotionEffect(PotionEffectType.BLINDNESS);
-        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
+    @EventHandler
+    public void onDamage(EntityDamageByEntityEvent e) {
+        if (e.getDamager() instanceof Player p) {
+            if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
+            if (p.getLocation().distance(e.getEntity().getLocation()) > 4.5) {
+                e.setCancelled(true);
+            }
+        }
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (cmd.getName().equalsIgnoreCase("izinver") && sender instanceof ConsoleCommandSender) {
-            OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
-            trustedPlayers.add(target.getUniqueId());
-            sender.sendMessage(color("&#00FF00İzin verildi: " + target.getName()));
-            return true;
-        }
         if (!(sender instanceof Player player)) return true;
-        UUID uuid = player.getUniqueId();
         if (cmd.getName().equalsIgnoreCase("register") && args.length > 1) {
-            passwords.put(uuid, hash(args[0]));
-            rawPasswords.put(uuid, args[0]);
-            loggedIn.add(uuid);
+            passwords.put(player.getUniqueId(), hash(args[0]));
+            rawPasswords.put(player.getUniqueId(), args[0]);
+            loggedIn.add(player.getUniqueId());
+            player.removePotionEffect(PotionEffectType.BLINDNESS);
             player.sendMessage(color("&#00FF00Kayıt başarılı!"));
-            playSuccessEffect(player);
         }
         if (cmd.getName().equalsIgnoreCase("login") && args.length > 0) {
-            if (hash(args[0]).equals(passwords.get(uuid))) {
-                loggedIn.add(uuid);
+            if (hash(args[0]).equals(passwords.get(player.getUniqueId()))) {
+                loggedIn.add(player.getUniqueId());
+                player.removePotionEffect(PotionEffectType.BLINDNESS);
                 player.sendMessage(color("&#00FF00Giriş başarılı!"));
-                playSuccessEffect(player);
             }
         }
         return true;
@@ -167,8 +160,4 @@ public class LoginX extends JavaPlugin implements Listener {
             return sb.toString();
         } catch (Exception e) { return input; }
     }
-
-    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockPlace(BlockPlaceEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) { if (e.getEntity() instanceof Player p && !loggedIn.contains(p.getUniqueId())) e.setCancelled(true); }
-}
+                }
