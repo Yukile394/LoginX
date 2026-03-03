@@ -457,8 +457,8 @@ public class LoginX extends JavaPlugin implements Listener {
         } catch (Exception e) { return input; }
     }
 
-    // HATASIZ RGB (HEX) ÇEVİRİCİ
-    private String color(String text) {
+    // HATASIZ RGB (HEX) ÇEVİRİCİ - PUBLIC YAPILDI
+    public String color(String text) {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
         Matcher matcher = pattern.matcher(text);
         StringBuffer buffer = new StringBuffer();
@@ -473,3 +473,4 @@ public class LoginX extends JavaPlugin implements Listener {
         return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
     }
             }
+                                              
