@@ -17,13 +17,12 @@ public class LoginX2 implements Listener, CommandExecutor {
 
     public LoginX2(LoginX plugin) {
         this.plugin = plugin;
-        // TÜM KOMUTLAR BURADA TANIMLANDI
+        // TÜM KOMUTLARIN KAYDI
         String[] cmds = {"ban", "ipban", "mute", "ipmute", "kick", "ipkick", "unban", "pardon", "unmute", "unipban"};
         for (String c : cmds) {
             PluginCommand pc = plugin.getCommand(c);
             if (pc != null) pc.setExecutor(this);
         }
-        // Görsel görevleri (Tab/Scoreboard) başlat
         startVisuals();
     }
 
@@ -39,83 +38,84 @@ public class LoginX2 implements Listener, CommandExecutor {
             return true;
         }
 
-        String target = args[0];
+        String targetName = args[0];
         String timeStr = (args.length > 1) ? args[1] : "Süresiz";
-        String reason = (args.length > 2) ? String.join(" ", Arrays.copyOfRange(args, 2, args.length)) : "Sunucu Kuralları İhlali";
+        String reason = (args.length > 2) ? String.join(" ", Arrays.copyOfRange(args, 2, args.length)) : "Kurallara Aykırı Davranış";
         long duration = parseTime(timeStr);
         long expiry = (duration == -1) ? -1 : System.currentTimeMillis() + duration;
 
-        Player onlineTarget = Bukkit.getPlayer(target);
-        String targetIP = (onlineTarget != null) ? onlineTarget.getAddress().getAddress().getHostAddress() : target;
+        Player onlineTarget = Bukkit.getPlayer(targetName);
+        String targetIP = (onlineTarget != null) ? onlineTarget.getAddress().getAddress().getHostAddress() : targetName;
 
         switch (cmd.getName().toLowerCase()) {
             case "ban":
-                save("bans", target, reason, expiry, sender.getName());
-                announce("BAN", target, sender.getName(), reason, timeStr, false);
-                if (onlineTarget != null) onlineTarget.kickPlayer(getKickMsg("YASAKLANDINIZ", reason, sender.getName(), timeStr));
+                save("bans", targetName, reason, expiry, sender.getName());
+                announce("BAN", targetName, sender.getName(), reason, timeStr, false);
+                if (onlineTarget != null) onlineTarget.kickPlayer(getKickScreen("YASAKLANDINIZ", reason, sender.getName(), timeStr));
                 break;
 
             case "ipban":
                 save("ipbans", targetIP.replace(".", "_"), reason, expiry, sender.getName());
-                announce("IP-BAN", target, sender.getName(), reason, timeStr, false);
+                announce("IP-BAN", targetName, sender.getName(), reason, timeStr, false);
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     if (p.getAddress().getAddress().getHostAddress().equals(targetIP))
-                        p.kickPlayer(getKickMsg("IP-ADRESİNİZ YASAKLANDI", reason, sender.getName(), timeStr));
+                        p.kickPlayer(getKickScreen("IP ADRESİNİZ YASAKLANDI", reason, sender.getName(), timeStr));
                 }
                 break;
 
             case "mute":
-                save("mutes", target, reason, expiry, sender.getName());
-                announce("MUTE", target, sender.getName(), reason, timeStr, false);
+                save("mutes", targetName, reason, expiry, sender.getName());
+                announce("MUTE", targetName, sender.getName(), reason, timeStr, false);
                 break;
 
             case "ipmute":
                 save("ipmutes", targetIP.replace(".", "_"), reason, expiry, sender.getName());
-                announce("IP-MUTE", target, sender.getName(), reason, timeStr, false);
+                announce("IP-MUTE", targetName, sender.getName(), reason, timeStr, false);
                 break;
 
             case "kick":
                 if (onlineTarget != null) {
-                    onlineTarget.kickPlayer(getKickMsg("SUNUCUDAN ATILDINIZ", reason, sender.getName(), "Yok"));
-                    announce("KICK", target, sender.getName(), reason, "Tek Seferlik", false);
+                    onlineTarget.kickPlayer(getKickScreen("SUNUCUDAN ATILDINIZ", reason, sender.getName(), "Yok"));
+                    announce("KICK", targetName, sender.getName(), reason, "Tek Seferlik", false);
                 }
                 break;
 
             case "ipkick":
-                announce("IP-KICK", target, sender.getName(), reason, "Tek Seferlik", false);
+                announce("IP-KICK", targetName, sender.getName(), reason, "Tek Seferlik", false);
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     if (p.getAddress().getAddress().getHostAddress().equals(targetIP))
-                        p.kickPlayer(getKickMsg("IP-KICK", reason, sender.getName(), "Yok"));
+                        p.kickPlayer(getKickScreen("IP KICK", reason, sender.getName(), "Yok"));
                 }
                 break;
 
             case "unban":
             case "pardon":
-                plugin.getConfig().set("punishments.bans." + target, null);
+                plugin.getConfig().set("punishments.bans." + targetName, null);
                 plugin.saveConfig();
-                announce("BAN KALDIRILDI", target, sender.getName(), "Affedildi", "-", true);
+                announce("CEZA KALDIRILDI", targetName, sender.getName(), "Affedildi", "-", true);
                 break;
 
             case "unmute":
-                plugin.getConfig().set("punishments.mutes." + target, null);
+                plugin.getConfig().set("punishments.mutes." + targetName, null);
                 plugin.saveConfig();
-                announce("MUTE KALDIRILDI", target, sender.getName(), "Konuşma İzni Verildi", "-", true);
+                announce("CEZA KALDIRILDI", targetName, sender.getName(), "Konuşma İzni Verildi", "-", true);
                 break;
 
             case "unipban":
-                plugin.getConfig().set("punishments.ipbans." + target.replace(".", "_"), null);
+                plugin.getConfig().set("punishments.ipbans." + targetName.replace(".", "_"), null);
                 plugin.saveConfig();
-                announce("IP-BAN KALDIRILDI", target, sender.getName(), "IP Engeli Kalktı", "-", true);
+                announce("CEZA KALDIRILDI", targetName, sender.getName(), "IP Engeli Kalktı", "-", true);
                 break;
         }
         return true;
     }
 
+    // --- CEZA DUYURU SİSTEMİ (CHATE DÜŞEN KISIM) ---
     private void announce(String type, String target, String staff, String reason, String time, boolean removed) {
         String line = color("&#FF69B4&m----------------------------------------");
         Bukkit.broadcastMessage("");
         Bukkit.broadcastMessage(line);
-        Bukkit.broadcastMessage(center(removed ? "&#00FF00( İşlem Başarılı )" : "&#FF1493( Ceza Sistemi )"));
+        Bukkit.broadcastMessage(center(removed ? "&#00FF00( İşlem Tamamlandı )" : "&#FF1493( Ceza Sistemi )"));
         Bukkit.broadcastMessage("");
         Bukkit.broadcastMessage(color("  &#FFB6C1" + (removed ? "Affedilen" : "Cezalı") + " Oyuncu: &f" + target));
         Bukkit.broadcastMessage(color("  &#FFB6C1İşlem Yapan: &f" + staff));
@@ -124,13 +124,13 @@ public class LoginX2 implements Listener, CommandExecutor {
             Bukkit.broadcastMessage(color("  &#FFB6C1Sebep: &7" + reason));
         }
         Bukkit.broadcastMessage("");
-        Bukkit.broadcastMessage(center("&#FF69B4[ Discord: discord.gg/svxnw ]"));
-        Bukkit.broadcastMessage(center("&#FFB6C1[ SVX NW - Profesyonel Yönetim ]"));
+        Bukkit.broadcastMessage(center("&#FF69B4[ Destek: discord.gg/svxnw ]"));
+        Bukkit.broadcastMessage(center("&#FFB6C1[ SVX NW - Adalet Mülkün Temelidir ]"));
         Bukkit.broadcastMessage(line);
         Bukkit.broadcastMessage("");
     }
 
-    private String getKickMsg(String title, String reason, String staff, String time) {
+    private String getKickScreen(String title, String reason, String staff, String time) {
         return color(
             "&8&m----------------------------------------\n" +
             "&#FF1493&l⚡ SVX NW PROTECTION ⚡\n\n" +
@@ -143,9 +143,9 @@ public class LoginX2 implements Listener, CommandExecutor {
         );
     }
 
-    // --- EVENTLER: MUTE VE BAN KONTROLÜ ---
+    // --- MUTE, BAN VE /ME ENGELİ ---
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void onCommand(PlayerCommandPreprocessEvent e) {
+    public void onCmd(PlayerCommandPreprocessEvent e) {
         String msg = e.getMessage().toLowerCase();
         if (msg.startsWith("/me ") || msg.startsWith("/minecraft:me ")) {
             if (isP(e.getPlayer(), "mutes") || isP(e.getPlayer(), "ipmutes")) {
@@ -164,21 +164,21 @@ public class LoginX2 implements Listener, CommandExecutor {
     }
 
     @EventHandler
-    public void onPreJoin(AsyncPlayerPreLoginEvent e) {
-        String n = e.getName();
+    public void onJoin(AsyncPlayerPreLoginEvent e) {
+        String name = e.getName();
         String ip = e.getAddress().getHostAddress().replace(".", "_");
-        if (checkP("bans", n) || checkP("ipbans", ip)) {
-            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, getKickMsg("GİRİŞ ENGELLENDİ", "Aktif bir cezanız bulunuyor.", "Yönetim", "Belirsiz"));
+        if (checkP("bans", name) || checkP("ipbans", ip)) {
+            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, getKickScreen("GİRİŞ ENGELLENDİ", "Aktif bir yasağınız bulunuyor.", "Yönetim", "Bilinmiyor"));
         }
     }
 
-    // --- GÖRSEL: TAB VE SCOREBOARD ---
+    // --- TAB VE SCOREBOARD (GÖRSELDEKİ GİBİ PEMBE) ---
     private void startVisuals() {
         new BukkitRunnable() {
             @Override
             public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    updateSB(p);
+                    updateScoreboard(p);
                     p.setPlayerListHeaderFooter(
                         color("\n&#FF1493&lSVX NW NETWORK\n&#FFB6C1Keyifli Oyunlar Dileriz!\n"),
                         color("\n&#FF69B4www.svxnw.com\n&#FFB6C1discord.gg/svxnw\n")
@@ -188,7 +188,7 @@ public class LoginX2 implements Listener, CommandExecutor {
         }.runTaskTimer(plugin, 0, 20L);
     }
 
-    private void updateSB(Player p) {
+    private void updateScoreboard(Player p) {
         Scoreboard b = Bukkit.getScoreboardManager().getNewScoreboard();
         Objective o = b.registerNewObjective("svx", "dummy", color("&#FF1493&lSVX NW"));
         o.setDisplaySlot(DisplaySlot.SIDEBAR);
@@ -198,18 +198,21 @@ public class LoginX2 implements Listener, CommandExecutor {
             "&#FFB6C1RÜTBE &8» &fOyuncu",
             "&#FFB6C1KLAN &8» &cX",
             " ",
+            "&#FFB6C1KATLETME &8» &a0",
+            "&#FFB6C1KATLEDİLME &8» &c0",
+            " ",
             "&#FFB6C1PING &8» &a" + p.getPing() + "ms",
             "&#FFB6C1AKTİF &8» &f" + Bukkit.getOnlinePlayers().size(),
-            " ",
-            "&#FF69B4www.svxnw.com",
-            "&7&m------------------ "
+            "&#FFB6C1OY PARTİSİ &8» &d0/50",
+            "&7&m------------------ ",
+            "&#FF69B4www.svxnw.com"
         };
         int i = lines.length;
         for (String s : lines) o.getScore(color(s)).setScore(i--);
         p.setScoreboard(b);
     }
 
-    // --- YARDIMCI ARAÇLAR ---
+    // --- YARDIMCI METOTLAR ---
     private void save(String t, String k, String r, long e, String s) {
         plugin.getConfig().set("punishments." + t + "." + k + ".reason", r);
         plugin.getConfig().set("punishments." + t + "." + k + ".expiry", e);
@@ -260,5 +263,4 @@ public class LoginX2 implements Listener, CommandExecutor {
         } catch (Exception e) {}
         return -1;
     }
-                    }
-                               
+}
