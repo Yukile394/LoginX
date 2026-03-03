@@ -3,6 +3,7 @@ package com.loginx;
 import org.bukkit.*;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.block.Action;
@@ -10,15 +11,12 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.*;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.util.Vector;
 
 import java.security.MessageDigest;
 import java.util.*;
@@ -27,20 +25,18 @@ import java.util.regex.Pattern;
 
 public class LoginX extends JavaPlugin implements Listener {
 
-    private final Map<UUID, String> passwords = new HashMap<>(); 
-    private final Map<UUID, String> rawPasswords = new HashMap<>(); 
-    private final Map<UUID, Integer> attempts = new HashMap<>();
+    protected final Map<UUID, String> passwords = new HashMap<>(); 
+    protected final Map<UUID, String> rawPasswords = new HashMap<>(); 
+    protected final Map<UUID, Integer> attempts = new HashMap<>();
     protected final Set<UUID> loggedIn = new HashSet<>();
-    private final Map<UUID, String> lastIP = new HashMap<>();
-    private final Set<UUID> trustedPlayers = new HashSet<>(); 
+    protected final Map<UUID, String> lastIP = new HashMap<>();
+    protected final Set<UUID> trustedPlayers = new HashSet<>(); // İzinver Sistemi
     
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
     private final Map<UUID, Long> lastChatTime = new HashMap<>();
-    private final int MAX_CPS = 15;
+    private final int MAX_CPS = 15; // Saniyedeki maksimum tıklama (Auto-Clicker sınırı)
 
     private FileConfiguration cfg;
-    private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
-    private final String GUI_IZIN_TITLE = color("&#FFB6C1&lÖzel İzinli Oyuncular");
 
     @Override
     public void onEnable() {
@@ -50,7 +46,7 @@ public class LoginX extends JavaPlugin implements Listener {
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX Aktif!");
+        getLogger().info("LoginX Ana Sistem Aktif!");
     }
 
     @Override
@@ -70,16 +66,14 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    private void saveData() {
+    public void saveData() {
         cfg.set("data", null);
         for (UUID u : passwords.keySet()) {
             cfg.set("data." + u + ".hash", passwords.get(u));
             cfg.set("data." + u + ".raw", rawPasswords.get(u));
             cfg.set("data." + u + ".ip", lastIP.get(u));
         }
-        List<String> trustedList = new ArrayList<>();
-        for (UUID u : trustedPlayers) trustedList.add(u.toString());
-        cfg.set("trusted_players", trustedList);
+        cfg.set("trusted_players", new ArrayList<>(trustedPlayers.stream().map(UUID::toString).toList()));
         saveConfig();
     }
 
@@ -88,63 +82,52 @@ public class LoginX extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
         String currentIP = p.getAddress().getAddress().getHostAddress();
-        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP)) {
+        if (passwords.containsKey(uuid) && Objects.equals(lastIP.get(uuid), currentIP)) {
             loggedIn.add(uuid);
             p.sendMessage(color("&#00FF00[LoginX] &aOtomatik giriş yapıldı!"));
-            playSuccessEffect(p);
             return;
         }
         lastIP.put(uuid, currentIP);
-        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1, false, false));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1));
         new BukkitRunnable() {
             int count = 0;
-            @Override
             public void run() {
                 if (loggedIn.contains(uuid) || !p.isOnline()) { cancel(); return; }
-                sendLoginTitle(p);
+                p.sendTitle(color(cfg.getString("title_colors.login.header")), color(cfg.getString("title_colors.login.footer")), 10, 40, 10);
             }
         }.runTaskTimer(this, 0, 40L);
     }
 
-    private void sendLoginTitle(Player p) {
-        String type = !passwords.containsKey(p.getUniqueId()) ? "register" : "login";
-        p.sendTitle(color(cfg.getString("title_colors." + type + ".header")), color(cfg.getString("title_colors." + type + ".footer")), 10, 40, 10);
+    // --- HİLE KORUMALARI (CPS & REACH) ---
+    private boolean checkCPS(Player p) {
+        UUID uuid = p.getUniqueId();
+        long now = System.currentTimeMillis();
+        clickData.putIfAbsent(uuid, new LinkedList<>());
+        LinkedList<Long> clicks = clickData.get(uuid);
+        clicks.add(now);
+        clicks.removeIf(time -> now - time > 1000);
+        return clicks.size() > MAX_CPS;
     }
 
-    private void playSuccessEffect(Player p) {
-        p.removePotionEffect(PotionEffectType.BLINDNESS);
-        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onInteract(PlayerInteractEvent e) {
+        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
+        if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK) {
+            if (checkCPS(e.getPlayer())) e.setCancelled(true);
+        }
     }
 
-    @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (cmd.getName().equalsIgnoreCase("izinver") && sender instanceof ConsoleCommandSender) {
-            OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
-            if (trustedPlayers.contains(target.getUniqueId())) trustedPlayers.remove(target.getUniqueId());
-            else trustedPlayers.add(target.getUniqueId());
-            saveData();
-            return true;
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onDamage(EntityDamageByEntityEvent e) {
+        if (e.getDamager() instanceof Player p) {
+            if (!loggedIn.contains(p.getUniqueId())) e.setCancelled(true);
+            if (checkCPS(p)) e.setCancelled(true);
+            
+            double targetHeight = e.getEntity() instanceof LivingEntity ? ((LivingEntity) e.getEntity()).getEyeHeight() / 2 : 1.0;
+            Location targetCenter = e.getEntity().getLocation().add(0, targetHeight, 0);
+            if (p.getEyeLocation().distance(targetCenter) > 4.3 && p.getGameMode() == GameMode.SURVIVAL) e.setCancelled(true);
         }
-        if (!(sender instanceof Player player)) return true;
-        if (cmd.getName().equalsIgnoreCase("register") && args.length > 1) {
-            passwords.put(player.getUniqueId(), hash(args[0]));
-            rawPasswords.put(player.getUniqueId(), args[0]);
-            loggedIn.add(player.getUniqueId());
-            playSuccessEffect(player);
-            saveData();
-        }
-        if (cmd.getName().equalsIgnoreCase("login") && args.length > 0) {
-            if (hash(args[0]).equals(passwords.get(player.getUniqueId()))) {
-                loggedIn.add(player.getUniqueId());
-                playSuccessEffect(player);
-            }
-        }
-        return true;
     }
-
-    // --- TEMEL KORUMALAR ---
-    @EventHandler public void onMove(PlayerMoveEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler public void onChat(AsyncPlayerChatEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
 
     public String color(String text) {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
@@ -169,4 +152,3 @@ public class LoginX extends JavaPlugin implements Listener {
         } catch (Exception e) { return input; }
     }
     }
-                                           
