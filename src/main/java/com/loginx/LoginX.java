@@ -10,6 +10,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -18,7 +19,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.util.Vector;
 
 import java.security.MessageDigest;
 import java.util.*;
@@ -27,25 +27,36 @@ import java.util.regex.Pattern;
 
 public class LoginX extends JavaPlugin implements Listener {
 
-    protected final Map<UUID, String> passwords = new HashMap<>(); 
-    protected final Map<UUID, String> rawPasswords = new HashMap<>(); 
+    private final Map<UUID, String> passwords = new HashMap<>(); 
+    private final Map<UUID, String> rawPasswords = new HashMap<>(); 
+    private final Map<UUID, Integer> attempts = new HashMap<>();
     protected final Set<UUID> loggedIn = new HashSet<>();
-    protected final Map<UUID, String> lastIP = new HashMap<>();
-    protected final Set<UUID> trustedPlayers = new HashSet<>(); 
-    protected final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
+    private final Map<UUID, String> lastIP = new HashMap<>();
+    private final Set<UUID> trustedPlayers = new HashSet<>(); 
+    
+    private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
+    private final Map<UUID, Long> lastChatTime = new HashMap<>();
+    private final int MAX_CPS = 15;
+
+    private FileConfiguration cfg;
+    private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
+    private final String GUI_IZIN_TITLE = color("&#FFB6C1&lÖzel İzinli Oyuncular");
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
-        loadData();
         Bukkit.getPluginManager().registerEvents(this, this);
-        // LoginX2'yi (Moderasyon ve AutoTotem) bağla
+        // LoginX2'yi sisteme bağla
         Bukkit.getPluginManager().registerEvents(new LoginX2(this), this);
-        getLogger().info("LoginX Sistemleri Aktif!");
+        saveDefaultConfig();
+        cfg = getConfig();
+        loadData();
+        getLogger().info("LoginX Aktif!");
     }
 
+    @Override
+    public void onDisable() { saveData(); }
+
     private void loadData() {
-        FileConfiguration cfg = getConfig();
         if (cfg.contains("data")) {
             for (String key : cfg.getConfigurationSection("data").getKeys(false)) {
                 UUID u = UUID.fromString(key);
@@ -59,84 +70,81 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    public void saveData() {
-        FileConfiguration cfg = getConfig();
+    private void saveData() {
         cfg.set("data", null);
         for (UUID u : passwords.keySet()) {
             cfg.set("data." + u + ".hash", passwords.get(u));
             cfg.set("data." + u + ".raw", rawPasswords.get(u));
             cfg.set("data." + u + ".ip", lastIP.get(u));
         }
-        cfg.set("trusted_players", new ArrayList<>(trustedPlayers.stream().map(UUID::toString).toList()));
+        List<String> trustedList = new ArrayList<>();
+        for (UUID u : trustedPlayers) trustedList.add(u.toString());
+        cfg.set("trusted_players", trustedList);
         saveConfig();
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
+        UUID uuid = p.getUniqueId();
         String currentIP = p.getAddress().getAddress().getHostAddress();
-        if (passwords.containsKey(p.getUniqueId()) && Objects.equals(lastIP.get(p.getUniqueId()), currentIP)) {
-            loggedIn.add(p.getUniqueId());
-            p.sendMessage(color("&#00FF00[LoginX] &aAynı IP adresinden bağlandığın için otomatik giriş yapıldı!"));
-            p.removePotionEffect(PotionEffectType.BLINDNESS);
+        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP)) {
+            loggedIn.add(uuid);
+            p.sendMessage(color("&#00FF00[LoginX] &aOtomatik giriş yapıldı!"));
+            playSuccessEffect(p);
             return;
         }
-        lastIP.put(p.getUniqueId(), currentIP);
-        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1));
+        lastIP.put(uuid, currentIP);
+        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1, false, false));
         new BukkitRunnable() {
             int count = 0;
+            @Override
             public void run() {
-                if (loggedIn.contains(p.getUniqueId()) || !p.isOnline()) { cancel(); return; }
-                String type = !passwords.containsKey(p.getUniqueId()) ? "register" : "login";
-                p.sendTitle(color(getConfig().getString("title_colors." + type + ".header")), color(getConfig().getString("title_colors." + type + ".footer")), 10, 40, 10);
-                if (++count > getConfig().getInt("login_timeout")) p.kickPlayer(color("&#FF0000Süre doldu!"));
+                if (loggedIn.contains(uuid) || !p.isOnline()) { cancel(); return; }
+                sendLoginTitle(p);
             }
         }.runTaskTimer(this, 0, 40L);
     }
 
-    // --- TEMEL HİLE KORUMALARI ---
-    @EventHandler
-    public void onMove(PlayerMoveEvent e) {
-        Player p = e.getPlayer();
-        if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-        if (p.getGameMode() != GameMode.SURVIVAL || p.isFlying()) return;
-
-        double yDiff = e.getTo().getY() - e.getFrom().getY();
-        if (yDiff > 0.8 && p.getVelocity().getY() < 0.1) {
-            e.setCancelled(true);
-            p.kickPlayer(color("&#FF0000Fly Tespit Edildi!"));
-        }
+    private void sendLoginTitle(Player p) {
+        String type = !passwords.containsKey(p.getUniqueId()) ? "register" : "login";
+        p.sendTitle(color(cfg.getString("title_colors." + type + ".header")), color(cfg.getString("title_colors." + type + ".footer")), 10, 40, 10);
     }
 
-    @EventHandler
-    public void onDamage(EntityDamageByEntityEvent e) {
-        if (e.getDamager() instanceof Player p) {
-            if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-            if (p.getLocation().distance(e.getEntity().getLocation()) > 4.5) {
-                e.setCancelled(true);
-            }
-        }
+    private void playSuccessEffect(Player p) {
+        p.removePotionEffect(PotionEffectType.BLINDNESS);
+        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        if (cmd.getName().equalsIgnoreCase("izinver") && sender instanceof ConsoleCommandSender) {
+            OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
+            if (trustedPlayers.contains(target.getUniqueId())) trustedPlayers.remove(target.getUniqueId());
+            else trustedPlayers.add(target.getUniqueId());
+            saveData();
+            return true;
+        }
         if (!(sender instanceof Player player)) return true;
         if (cmd.getName().equalsIgnoreCase("register") && args.length > 1) {
             passwords.put(player.getUniqueId(), hash(args[0]));
             rawPasswords.put(player.getUniqueId(), args[0]);
             loggedIn.add(player.getUniqueId());
-            player.removePotionEffect(PotionEffectType.BLINDNESS);
-            player.sendMessage(color("&#00FF00Kayıt başarılı!"));
+            playSuccessEffect(player);
+            saveData();
         }
         if (cmd.getName().equalsIgnoreCase("login") && args.length > 0) {
             if (hash(args[0]).equals(passwords.get(player.getUniqueId()))) {
                 loggedIn.add(player.getUniqueId());
-                player.removePotionEffect(PotionEffectType.BLINDNESS);
-                player.sendMessage(color("&#00FF00Giriş başarılı!"));
+                playSuccessEffect(player);
             }
         }
         return true;
     }
+
+    // --- TEMEL KORUMALAR ---
+    @EventHandler public void onMove(PlayerMoveEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    @EventHandler public void onChat(AsyncPlayerChatEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
 
     public String color(String text) {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
@@ -160,4 +168,5 @@ public class LoginX extends JavaPlugin implements Listener {
             return sb.toString();
         } catch (Exception e) { return input; }
     }
-                }
+    }
+                                           
