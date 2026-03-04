@@ -9,6 +9,7 @@ import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.scheduler.BukkitRunnable;
+
 import java.util.*;
 
 public class LoginX2 implements Listener, CommandExecutor {
@@ -18,163 +19,175 @@ public class LoginX2 implements Listener, CommandExecutor {
 
     public LoginX2(LoginX plugin) {
         this.plugin = plugin;
-        // Komutları bu sınıfa bağla
-        String[] cmds = {"ban", "unban", "kick", "mute", "unmute", "ipban", "kickip"};
+
+        String[] cmds = {"ban", "unban", "kick", "mute", "unmute", "ipban"};
         for (String c : cmds) {
-            plugin.getCommand(c).setExecutor(this);
+            PluginCommand command = plugin.getCommand(c);
+            if (command != null) {
+                command.setExecutor(this);
+            }
         }
     }
 
-    // --- MODERASYON TASARIMI (SİMETRİK PEMBE RGB) ---
+    // =========================
+    // CEZA TASARIMI
+    // =========================
     private void broadcastPunishment(String type, String target, String staff, String reason, String time) {
-        String line = plugin.color("&#FF1493&m----------------------------------------");
+        String line = ChatColor.of("#FF1493") + "----------------------------------------";
+
         Bukkit.broadcastMessage("");
         Bukkit.broadcastMessage(line);
-        Bukkit.broadcastMessage(centerText(plugin.color("&#FF69B4&l(" + type + ")")));
-        Bukkit.broadcastMessage(plugin.color("  &#FFB6C1Banlanan Oyuncu: &f" + target));
-        Bukkit.broadcastMessage(plugin.color("  &#FFB6C1Banlayan Yetkili: &f" + staff));
-        Bukkit.broadcastMessage(plugin.color("  &#FFB6C1Banlanma Süresi: &f" + time));
+        Bukkit.broadcastMessage(center("§x§F§F§6§9§B§4§l(" + type + ")"));
+        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Oyuncu: §f" + target);
+        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Yetkili: §f" + staff);
+        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Süre: §f" + time);
         Bukkit.broadcastMessage("");
-        Bukkit.broadcastMessage(centerText(plugin.color("&#FF69B4[Discord: discord.gg/loginx]")));
-        Bukkit.broadcastMessage(centerText(plugin.color("&#FFB6C1[Cezası: " + reason + "]")));
+        Bukkit.broadcastMessage(center("§x§F§F§6§9§B§4Sebep: §f" + reason));
         Bukkit.broadcastMessage(line);
         Bukkit.broadcastMessage("");
     }
 
-    private String centerText(String text) {
-        int maxWidth = 40;
-        int spaces = (maxWidth - ChatColor.stripColor(text).length()) / 2;
+    private String center(String text) {
+        int max = 40;
+        int spaces = (max - ChatColor.stripColor(text).length()) / 2;
         return " ".repeat(Math.max(0, spaces)) + text;
     }
 
-    // --- KOMUT İŞLEYİCİ ---
+    // =========================
+    // KOMUTLAR
+    // =========================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+
         if (!sender.hasPermission("loginx.admin")) return true;
 
         if (args.length < 1) {
-            sender.sendMessage(plugin.color("&#FF0000Kullanım: /" + label + " <oyuncu> [sebep]"));
+            sender.sendMessage(ChatColor.RED + "Kullanım: /" + label + " <oyuncu> [sebep]");
             return true;
         }
 
         String targetName = args[0];
-        String reason = args.length > 1 ? String.join(" ", Arrays.copyOfRange(args, 1, args.length)) : "Kurallara Aykırı Hareket";
+        String reason = args.length > 1
+                ? String.join(" ", Arrays.copyOfRange(args, 1, args.length))
+                : "Kurallara Aykırı Hareket";
+
         OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
-        String staffName = sender.getName();
+        String staff = sender.getName();
 
         switch (cmd.getName().toLowerCase()) {
+
             case "ban":
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId(), reason);
                 plugin.saveConfig();
-                broadcastPunishment("Ban", targetName, staffName, reason, "Süresiz");
-                if (target.isOnline()) ((Player) target).kickPlayer(plugin.color("&#FF0000Yasaklandınız!\n&#FFB6C1Sebep: " + reason));
+                broadcastPunishment("BAN", targetName, staff, reason, "Süresiz");
+
+                if (target.isOnline()) {
+                    ((Player) target).kickPlayer("§cYasaklandınız!\n§fSebep: " + reason);
+                }
                 break;
 
             case "unban":
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId(), null);
                 plugin.saveConfig();
-                sender.sendMessage(plugin.color("&#00FF00" + targetName + " adlı oyuncunun banı kaldırıldı."));
+                sender.sendMessage(ChatColor.GREEN + "Ban kaldırıldı.");
                 break;
 
             case "mute":
                 plugin.getConfig().set("punishments.mutes." + target.getUniqueId(), reason);
                 plugin.saveConfig();
-                broadcastPunishment("Mute", targetName, staffName, reason, "Süresiz");
+                broadcastPunishment("MUTE", targetName, staff, reason, "Süresiz");
                 break;
 
             case "unmute":
                 plugin.getConfig().set("punishments.mutes." + target.getUniqueId(), null);
                 plugin.saveConfig();
-                sender.sendMessage(plugin.color("&#00FF00" + targetName + " susturması kaldırıldı."));
+                sender.sendMessage(ChatColor.GREEN + "Mute kaldırıldı.");
                 break;
 
             case "kick":
                 if (target.isOnline()) {
-                    ((Player) target).kickPlayer(plugin.color("&#FF0000Sunucudan Atıldınız!\n&#FFB6C1Yetkili: " + staffName + "\n&#FFB6C1Sebep: " + reason));
-                    broadcastPunishment("Kick", targetName, staffName, reason, "Tek Seferlik");
+                    ((Player) target).kickPlayer("§cSunucudan Atıldınız!\n§fSebep: " + reason);
+                    broadcastPunishment("KICK", targetName, staff, reason, "Tek Seferlik");
                 }
                 break;
 
             case "ipban":
                 if (target.isOnline()) {
-                    String ip = ((Player) target).getAddress().getAddress().getHostAddress();
-                    plugin.getConfig().set("punishments.ipbans." + ip.replace(".", "_"), reason);
+                    Player p = (Player) target;
+                    String ip = p.getAddress().getAddress().getHostAddress().replace(".", "_");
+                    plugin.getConfig().set("punishments.ipbans." + ip, reason);
                     plugin.saveConfig();
-                    broadcastPunishment("IP-Ban", targetName, staffName, reason, "Süresiz");
-                    ((Player) target).kickPlayer(plugin.color("&#FF0000IP Adresiniz Yasaklandı!"));
+
+                    broadcastPunishment("IP-BAN", targetName, staff, reason, "Süresiz");
+                    p.kickPlayer("§cIP Adresiniz Yasaklandı!");
                 }
                 break;
         }
+
         return true;
     }
 
-    // --- EVENTLER (BAN & MUTE KONTROLÜ) ---
-
+    // =========================
+    // BAN & MUTE KONTROL
+    // =========================
     @EventHandler
-    public void onLoginCheck(AsyncPlayerPreLoginEvent e) {
+    public void onLogin(AsyncPlayerPreLoginEvent e) {
+
         UUID uuid = e.getUniqueId();
         String ip = e.getAddress().getHostAddress().replace(".", "_");
 
         if (plugin.getConfig().contains("punishments.bans." + uuid)) {
             String reason = plugin.getConfig().getString("punishments.bans." + uuid);
-            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, plugin.color("&#FF0000Sunucudan Yasaklısınız!\n&#FFB6C1Sebep: " + reason));
+            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
+                    "§cSunucudan Yasaklısınız!\n§fSebep: " + reason);
         }
-        
+
         if (plugin.getConfig().contains("punishments.ipbans." + ip)) {
-            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, plugin.color("&#FF0000IP Adresiniz Bu Sunucudan Yasaklı!"));
+            e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
+                    "§cIP Adresiniz Yasaklı!");
         }
     }
 
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
+
         if (plugin.getConfig().contains("punishments.mutes." + e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
             String reason = plugin.getConfig().getString("punishments.mutes." + e.getPlayer().getUniqueId());
-            e.getPlayer().sendMessage(plugin.color("&#FF0000Şu an susturulmuş haldesiniz!\n&#FFB6C1Sebep: " + reason));
+            e.getPlayer().sendMessage("§cSusturulmuşsunuz!\n§fSebep: " + reason);
         }
     }
 
-    // --- ANTI-CHEAT BÖLÜMÜ ---
-
-    @EventHandler(priority = EventPriority.HIGHEST)
+    // =========================
+    // LOGIN KONTROL
+    // =========================
+    @EventHandler
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
-        if (!plugin.loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
-        if (p.getGameMode() != GameMode.SURVIVAL) return;
 
-        double yDiff = e.getTo().getY() - e.getFrom().getY();
-        double dist = e.getFrom().distance(e.getTo());
-
-        if (yDiff > 0.85 && p.getVelocity().getY() < 0.1) {
-            kickCheater(p, "Fly (Uçma)");
-        }
-        if (dist > 1.1 && p.getFallDistance() == 0 && !p.isGliding() && !p.hasPotionEffect(org.bukkit.potion.PotionEffectType.SPEED)) {
-            kickCheater(p, "Speed (Hız)");
+        if (!plugin.getLoggedIn().contains(p.getUniqueId())) {
+            e.setCancelled(true);
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onInventoryClick(InventoryClickEvent e) {
-        if (!(e.getWhoClicked() instanceof Player p)) return;
-        if (!plugin.loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
+    @EventHandler
+    public void onInventory(InventoryClickEvent e) {
 
-        long now = System.currentTimeMillis();
-        long lastClick = lastInventoryClick.getOrDefault(p.getUniqueId(), 0L);
-        if (now - lastClick < 15) {
+        if (!(e.getWhoClicked() instanceof Player p)) return;
+
+        if (!plugin.getLoggedIn().contains(p.getUniqueId())) {
             e.setCancelled(true);
-            kickCheater(p, "AutoTotem/Macro");
             return;
         }
-        lastInventoryClick.put(p.getUniqueId(), now);
-    }
 
-    private void kickCheater(Player p, String reason) {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                p.kickPlayer(plugin.color("&#FF0000[LoginX Shield]\n\n&fHile: &e" + reason));
-                broadcastPunishment("Anti-Cheat", p.getName(), "Sistem", reason, "Süresiz");
-            }
-        }.runTask(plugin);
+        long now = System.currentTimeMillis();
+        long last = lastInventoryClick.getOrDefault(p.getUniqueId(), 0L);
+
+        if (now - last < 15) {
+            e.setCancelled(true);
+            p.kickPlayer("§cMacro Tespit Edildi!");
+        }
+
+        lastInventoryClick.put(p.getUniqueId(), now);
     }
 }
