@@ -53,22 +53,20 @@ public class LoginX extends JavaPlugin implements Listener {
         // Kendi eventlerini kaydet
         Bukkit.getPluginManager().registerEvents(this, this);
         
-        // --- KRİTİK DÜZELTME: LoginX2'yi Başlatma ---
+        // --- KRİTİK DÜZELTME: LoginX2'yi Parametreli Başlatma ---
         try {
-            // Eğer LoginX2 sınıfın bir Listener ise buradan kaydediyoruz
-            // Not: LoginX2 constructor'ında (LoginX plugin) parametresi istiyorsa ona göre düzenlenebilir
-            // Genelde: new LoginX2(this) şeklinde olur.
-            LoginX2 egitimModulu = new LoginX2(); 
+            // Hata buradaydı: LoginX2(this) eklenerek ana sınıf bağlandı.
+            LoginX2 egitimModulu = new LoginX2(this); 
             Bukkit.getPluginManager().registerEvents(egitimModulu, this);
-            getLogger().info("LoginX2 Modülü başarıyla bağlandı!");
-        } catch (NoClassDefFoundError | Exception e) {
-            getLogger().warning("LoginX2 modülü bulunamadı veya başlatılamadı!");
+            getLogger().info("LoginX2 Modulu basariyla baglandi!");
+        } catch (Throwable t) {
+            getLogger().warning("LoginX2 modulu baslatilamadi!");
         }
 
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX ULTRA GÜVENLİK & ANTİ-HİLE Aktif! (8 Dk IP Koruması)");
+        getLogger().info("LoginX ULTRA GUVENLIK & ANTI-HILE Aktif! (8 Dk IP Korumasi)");
     }
 
     @Override
@@ -105,14 +103,13 @@ public class LoginX extends JavaPlugin implements Listener {
         saveConfig();
     }
 
-    // --- GİRİŞ / ÇIKIŞ (8 DAKİKA KONTROLLÜ) ---
+    // --- GIRIS / CIKIS (8 DAKIKA KONTROLLU) ---
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
         String currentIP = p.getAddress().getAddress().getHostAddress();
 
-        // 8 Dakika (480.000 ms) Zaman Limit Kontrolü
         long lastQuit = lastQuitTime.getOrDefault(uuid, 0L);
         boolean suresiDolmadi = (System.currentTimeMillis() - lastQuit) <= (8 * 60 * 1000);
 
@@ -151,8 +148,6 @@ public class LoginX extends JavaPlugin implements Listener {
         clickData.remove(u); 
         lastChatTime.remove(u);
         lastInventoryClick.remove(u);
-        
-        // Çıkış anını kaydet (8 dakika sayacı için)
         lastQuitTime.put(u, System.currentTimeMillis());
     }
 
@@ -171,7 +166,6 @@ public class LoginX extends JavaPlugin implements Listener {
     // --- KOMUTLAR ---
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        
         if (cmd.getName().equalsIgnoreCase("izinver") || cmd.getName().equalsIgnoreCase("izinengelle")) {
             if (!(sender instanceof ConsoleCommandSender)) {
                 sender.sendMessage(color("&#FF0000[!] Bu komut sadece KONSOL üzerinden kullanılabilir!"));
@@ -183,13 +177,12 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
             UUID targetUUID = target.getUniqueId();
-            
             if (cmd.getName().equalsIgnoreCase("izinver")) {
                 trustedPlayers.add(targetUUID);
                 sender.sendMessage(color("&#00FF00[LoginX] &f" + target.getName() + " &#00FF00adlı oyuncuya özel yetki VERİLDİ."));
             } else {
                 trustedPlayers.remove(targetUUID);
-                sender.sendMessage(color("&#FF0000[LoginX] &f" + target.getName() + " &#FF0000adlı oyuncunun özel yetkisi ALINDI."));
+                sender.sendMessage(color("&#FF0000[LoginX] &f" + target.getName() + " &#00FF00adlı oyuncunun özel yetkisi ALINDI."));
             }
             saveData();
             return true;
@@ -202,7 +195,6 @@ public class LoginX extends JavaPlugin implements Listener {
             if (args.length < 2) { player.sendMessage(color("&#FF0000Kullanım: /register <şifre> <şifre>")); return true; }
             if (passwords.containsKey(uuid)) { player.sendMessage(color("&#FF0000Zaten kayıtlısın!")); return true; }
             if (!args[0].equals(args[1])) { player.sendMessage(color("&#FF0000Şifreler uyuşmuyor!")); return true; }
-            
             passwords.put(uuid, hash(args[0]));
             rawPasswords.put(uuid, args[0]);
             loggedIn.add(uuid);
@@ -215,7 +207,6 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmd.getName().equalsIgnoreCase("login")) {
             if (args.length < 1) { player.sendMessage(color("&#FF0000Kullanım: /login <şifre>")); return true; }
             if (!passwords.containsKey(uuid)) { player.sendMessage(color("&#FF0000Önce kayıt olmalısın!")); return true; }
-            
             if (hash(args[0]).equals(passwords.get(uuid))) {
                 loggedIn.add(uuid);
                 player.sendMessage(color("&#00FF00Giriş başarılı!"));
@@ -237,11 +228,9 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!player.hasPermission("loginx.admin")) return true;
             openIzinMenu(player); return true;
         }
-
         return true;
     }
 
-    // --- GUI MENÜLER ---
     private void openLoginMenu(Player player) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_LOGIN_TITLE);
         for (UUID id : rawPasswords.keySet()) {
@@ -288,7 +277,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (e.getView().getTitle().equals(GUI_LOGIN_TITLE) || e.getView().getTitle().equals(GUI_IZIN_TITLE)) e.setCancelled(true);
     }
 
-    // --- HİLE KORUMASI (ANTI-CHEAT) ---
+    // --- ANTI-HILE ---
     private void kickCheater(Player p, String reason) {
         new BukkitRunnable() {
             @Override
@@ -327,7 +316,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (distance > MAX_REACH) { e.setCancelled(true); kickCheater(p, "Reach (Mesafe)"); }
     }
 
-    // --- YARDIMCI METOTLAR (DIŞARIDAN ERİŞİLEBİLİR) ---
+    // --- YARDIMCI METOTLAR ---
     private String hash(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -338,7 +327,6 @@ public class LoginX extends JavaPlugin implements Listener {
         } catch (Exception e) { return input; }
     }
 
-    // LoginX2'nin kullanabilmesi için Public yapıldı
     public String color(String text) {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
         Matcher matcher = pattern.matcher(text);
@@ -355,5 +343,5 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST) public void onMove(PlayerMoveEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST) public void onBlockPlace(BlockPlaceEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    }
+                    }
             
