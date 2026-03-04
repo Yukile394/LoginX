@@ -1,4 +1,4 @@
-Package com.loginx;
+package com.loginx;
 
 import org.bukkit.*;
 import org.bukkit.command.*;
