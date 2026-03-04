@@ -20,7 +20,7 @@ commands:
   izinvermenu:
     description: Güvenilir oyuncu listesi
     permission: loginx.admin
-  # --- YENİ MODERASYON KOMUTLARI ---
+  # --- MODERASYON VE İADE ---
   ban:
     description: Oyuncuyu uzaklaştırır
     permission: loginx.admin
@@ -41,6 +41,9 @@ commands:
     permission: loginx.admin
   kickip:
     description: IP üzerinden oyuncuyu atar
+    permission: loginx.admin
+  iade:
+    description: Ölen oyuncuların eşyalarını iade eder
     permission: loginx.admin
 
 permissions:
