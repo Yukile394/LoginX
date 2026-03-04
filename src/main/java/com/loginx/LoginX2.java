@@ -29,40 +29,28 @@ public class LoginX2 implements Listener, CommandExecutor {
         }
     }
 
-    // =========================
-    // CEZA TASARIMI
-    // =========================
     private void broadcastPunishment(String type, String target, String staff, String reason, String time) {
-        String line = ChatColor.of("#FF1493") + "----------------------------------------";
+
+        String line = "§d----------------------------------------";
 
         Bukkit.broadcastMessage("");
         Bukkit.broadcastMessage(line);
-        Bukkit.broadcastMessage(center("§x§F§F§6§9§B§4§l(" + type + ")"));
-        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Oyuncu: §f" + target);
-        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Yetkili: §f" + staff);
-        Bukkit.broadcastMessage(" §x§F§F§B§6§C§1Süre: §f" + time);
-        Bukkit.broadcastMessage("");
-        Bukkit.broadcastMessage(center("§x§F§F§6§9§B§4Sebep: §f" + reason));
+        Bukkit.broadcastMessage("§d§l(" + type + ")");
+        Bukkit.broadcastMessage(" §fOyuncu: §d" + target);
+        Bukkit.broadcastMessage(" §fYetkili: §d" + staff);
+        Bukkit.broadcastMessage(" §fSüre: §d" + time);
+        Bukkit.broadcastMessage(" §fSebep: §d" + reason);
         Bukkit.broadcastMessage(line);
         Bukkit.broadcastMessage("");
     }
 
-    private String center(String text) {
-        int max = 40;
-        int spaces = (max - ChatColor.stripColor(text).length()) / 2;
-        return " ".repeat(Math.max(0, spaces)) + text;
-    }
-
-    // =========================
-    // KOMUTLAR
-    // =========================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 
         if (!sender.hasPermission("loginx.admin")) return true;
 
         if (args.length < 1) {
-            sender.sendMessage(ChatColor.RED + "Kullanım: /" + label + " <oyuncu> [sebep]");
+            sender.sendMessage("§cKullanım: /" + label + " <oyuncu> [sebep]");
             return true;
         }
 
@@ -89,7 +77,7 @@ public class LoginX2 implements Listener, CommandExecutor {
             case "unban":
                 plugin.getConfig().set("punishments.bans." + target.getUniqueId(), null);
                 plugin.saveConfig();
-                sender.sendMessage(ChatColor.GREEN + "Ban kaldırıldı.");
+                sender.sendMessage("§aBan kaldırıldı.");
                 break;
 
             case "mute":
@@ -101,12 +89,12 @@ public class LoginX2 implements Listener, CommandExecutor {
             case "unmute":
                 plugin.getConfig().set("punishments.mutes." + target.getUniqueId(), null);
                 plugin.saveConfig();
-                sender.sendMessage(ChatColor.GREEN + "Mute kaldırıldı.");
+                sender.sendMessage("§aMute kaldırıldı.");
                 break;
 
             case "kick":
                 if (target.isOnline()) {
-                    ((Player) target).kickPlayer("§cSunucudan Atıldınız!\n§fSebep: " + reason);
+                    ((Player) target).kickPlayer("§cAtıldınız!\n§fSebep: " + reason);
                     broadcastPunishment("KICK", targetName, staff, reason, "Tek Seferlik");
                 }
                 break;
@@ -117,9 +105,8 @@ public class LoginX2 implements Listener, CommandExecutor {
                     String ip = p.getAddress().getAddress().getHostAddress().replace(".", "_");
                     plugin.getConfig().set("punishments.ipbans." + ip, reason);
                     plugin.saveConfig();
-
                     broadcastPunishment("IP-BAN", targetName, staff, reason, "Süresiz");
-                    p.kickPlayer("§cIP Adresiniz Yasaklandı!");
+                    p.kickPlayer("§cIP Yasaklandı!");
                 }
                 break;
         }
@@ -127,9 +114,6 @@ public class LoginX2 implements Listener, CommandExecutor {
         return true;
     }
 
-    // =========================
-    // BAN & MUTE KONTROL
-    // =========================
     @EventHandler
     public void onLogin(AsyncPlayerPreLoginEvent e) {
 
@@ -139,12 +123,12 @@ public class LoginX2 implements Listener, CommandExecutor {
         if (plugin.getConfig().contains("punishments.bans." + uuid)) {
             String reason = plugin.getConfig().getString("punishments.bans." + uuid);
             e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
-                    "§cSunucudan Yasaklısınız!\n§fSebep: " + reason);
+                    "§cYasaklısınız!\n§fSebep: " + reason);
         }
 
         if (plugin.getConfig().contains("punishments.ipbans." + ip)) {
             e.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
-                    "§cIP Adresiniz Yasaklı!");
+                    "§cIP Yasaklı!");
         }
     }
 
@@ -154,18 +138,13 @@ public class LoginX2 implements Listener, CommandExecutor {
         if (plugin.getConfig().contains("punishments.mutes." + e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
             String reason = plugin.getConfig().getString("punishments.mutes." + e.getPlayer().getUniqueId());
-            e.getPlayer().sendMessage("§cSusturulmuşsunuz!\n§fSebep: " + reason);
+            e.getPlayer().sendMessage("§cSusturuldunuz!\n§fSebep: " + reason);
         }
     }
 
-    // =========================
-    // LOGIN KONTROL
-    // =========================
     @EventHandler
     public void onMove(PlayerMoveEvent e) {
-        Player p = e.getPlayer();
-
-        if (!plugin.getLoggedIn().contains(p.getUniqueId())) {
+        if (!plugin.isLogged(e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
         }
     }
@@ -175,7 +154,7 @@ public class LoginX2 implements Listener, CommandExecutor {
 
         if (!(e.getWhoClicked() instanceof Player p)) return;
 
-        if (!plugin.getLoggedIn().contains(p.getUniqueId())) {
+        if (!plugin.isLogged(p.getUniqueId())) {
             e.setCancelled(true);
             return;
         }
