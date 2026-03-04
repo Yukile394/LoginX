@@ -8,5 +8,10 @@ title_colors:
     header: "&#00FFFF&lGIRIS YAP"
     footer: "&#E0FFFF&oDevam etmek için: /login <sifre>"
 
-# Aşağıdaki liste Konsol üzerinden /izinver kullanıldıkça otomatik dolar
+# Moderasyon kayıtları burada tutulur
+punishments:
+  bans: {}
+  mutes: {}
+  ipbans: {}
+
 trusted_players: []
