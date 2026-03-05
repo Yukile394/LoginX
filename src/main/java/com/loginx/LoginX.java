@@ -35,14 +35,12 @@ public class LoginX extends JavaPlugin implements Listener {
     private final Set<UUID> loggedIn = new HashSet<>();
     private final Map<UUID, String> lastIP = new HashMap<>();
     private final Set<UUID> trustedPlayers = new HashSet<>(); 
-    private final Map<UUID, Long> lastQuitTime = new HashMap<>(); // 8 Dakika Kontrolü
     
-    // --- ANTİ-HİLE VERİLERİ ---
+    // --- ANTİ-HİLE (ANTI-CHEAT) VERİLERİ ---
     private final Map<UUID, LinkedList<Long>> clickData = new HashMap<>();
     private final Map<UUID, Long> lastChatTime = new HashMap<>();
-    private final Map<UUID, Long> lastInventoryClick = new HashMap<>();
     private final int MAX_CPS = 16; 
-    private final double MAX_REACH = 4.5;
+    private final double MAX_REACH = 4.5; 
 
     private FileConfiguration cfg;
     private final String GUI_LOGIN_TITLE = color("&#FF69B4&lOyuncu Verileri");
@@ -53,20 +51,19 @@ public class LoginX extends JavaPlugin implements Listener {
         // Kendi eventlerini kaydet
         Bukkit.getPluginManager().registerEvents(this, this);
         
-        // --- KRİTİK DÜZELTME: LoginX2'yi Parametreli Başlatma ---
+        // --- LoginX2 MODÜLÜ BAĞLANTISI ---
         try {
-            // Hata buradaydı: LoginX2(this) eklenerek ana sınıf bağlandı.
-            LoginX2 egitimModulu = new LoginX2(this); 
-            Bukkit.getPluginManager().registerEvents(egitimModulu, this);
-            getLogger().info("LoginX2 Modulu basariyla baglandi!");
+            LoginX2 modül = new LoginX2(this); 
+            Bukkit.getPluginManager().registerEvents(modül, this);
+            getLogger().info("LoginX2 modulu basariyla aktif edildi!");
         } catch (Throwable t) {
-            getLogger().warning("LoginX2 modulu baslatilamadi!");
+            getLogger().warning("LoginX2 yuklenirken bir sorun olustu!");
         }
 
         saveDefaultConfig();
         cfg = getConfig();
         loadData();
-        getLogger().info("LoginX ULTRA GUVENLIK & ANTI-HILE Aktif! (8 Dk IP Korumasi)");
+        getLogger().info("LoginX ULTRA GÜVENLİK & ANTİ-HİLE Aktif!");
     }
 
     @Override
@@ -103,19 +100,16 @@ public class LoginX extends JavaPlugin implements Listener {
         saveConfig();
     }
 
-    // --- GIRIS / CIKIS (8 DAKIKA KONTROLLU) ---
+    // --- GİRİŞ / ÇIKIŞ ---
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         UUID uuid = p.getUniqueId();
         String currentIP = p.getAddress().getAddress().getHostAddress();
 
-        long lastQuit = lastQuitTime.getOrDefault(uuid, 0L);
-        boolean suresiDolmadi = (System.currentTimeMillis() - lastQuit) <= (8 * 60 * 1000);
-
-        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP) && suresiDolmadi && lastQuit != 0L) {
+        if (passwords.containsKey(uuid) && lastIP.containsKey(uuid) && lastIP.get(uuid).equals(currentIP)) {
             loggedIn.add(uuid);
-            p.sendMessage(color("&#00FF00[LoginX] &aHoş geldin! 8 dakika içinde döndüğün için otomatik giriş yapıldı."));
+            p.sendMessage(color("&#00FF00[LoginX] &aAynı IP adresinden bağlandığın için otomatik giriş yapıldı!"));
             playSuccessEffect(p);
             return;
         }
@@ -147,8 +141,6 @@ public class LoginX extends JavaPlugin implements Listener {
         loggedIn.remove(u);
         clickData.remove(u); 
         lastChatTime.remove(u);
-        lastInventoryClick.remove(u);
-        lastQuitTime.put(u, System.currentTimeMillis());
     }
 
     private void sendLoginTitle(Player p) {
@@ -166,6 +158,7 @@ public class LoginX extends JavaPlugin implements Listener {
     // --- KOMUTLAR ---
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        
         if (cmd.getName().equalsIgnoreCase("izinver") || cmd.getName().equalsIgnoreCase("izinengelle")) {
             if (!(sender instanceof ConsoleCommandSender)) {
                 sender.sendMessage(color("&#FF0000[!] Bu komut sadece KONSOL üzerinden kullanılabilir!"));
@@ -177,12 +170,13 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             OfflinePlayer target = Bukkit.getOfflinePlayer(args[0]);
             UUID targetUUID = target.getUniqueId();
+            
             if (cmd.getName().equalsIgnoreCase("izinver")) {
                 trustedPlayers.add(targetUUID);
-                sender.sendMessage(color("&#00FF00[LoginX] &f" + target.getName() + " &#00FF00adlı oyuncuya özel yetki VERİLDİ."));
+                sender.sendMessage(color("&#00FF00[LoginX] &f" + target.getName() + " &#00FF00adlı oyuncuya özel inşa/WE izni VERİLDİ."));
             } else {
                 trustedPlayers.remove(targetUUID);
-                sender.sendMessage(color("&#FF0000[LoginX] &f" + target.getName() + " &#00FF00adlı oyuncunun özel yetkisi ALINDI."));
+                sender.sendMessage(color("&#FF0000[LoginX] &f" + target.getName() + " &#FF0000adlı oyuncunun özel izni ENGELLENDİ."));
             }
             saveData();
             return true;
@@ -193,8 +187,9 @@ public class LoginX extends JavaPlugin implements Listener {
 
         if (cmd.getName().equalsIgnoreCase("register")) {
             if (args.length < 2) { player.sendMessage(color("&#FF0000Kullanım: /register <şifre> <şifre>")); return true; }
-            if (passwords.containsKey(uuid)) { player.sendMessage(color("&#FF0000Zaten kayıtlısın!")); return true; }
+            if (passwords.containsKey(uuid)) { player.sendMessage(color("&#FF0000Zaten kayıtlısın! /login <şifre>")); return true; }
             if (!args[0].equals(args[1])) { player.sendMessage(color("&#FF0000Şifreler uyuşmuyor!")); return true; }
+            
             passwords.put(uuid, hash(args[0]));
             rawPasswords.put(uuid, args[0]);
             loggedIn.add(uuid);
@@ -207,6 +202,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmd.getName().equalsIgnoreCase("login")) {
             if (args.length < 1) { player.sendMessage(color("&#FF0000Kullanım: /login <şifre>")); return true; }
             if (!passwords.containsKey(uuid)) { player.sendMessage(color("&#FF0000Önce kayıt olmalısın!")); return true; }
+            
             if (hash(args[0]).equals(passwords.get(uuid))) {
                 loggedIn.add(uuid);
                 player.sendMessage(color("&#00FF00Giriş başarılı!"));
@@ -228,9 +224,11 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!player.hasPermission("loginx.admin")) return true;
             openIzinMenu(player); return true;
         }
+
         return true;
     }
 
+    // --- GUI MENÜLER ---
     private void openLoginMenu(Player player) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_LOGIN_TITLE);
         for (UUID id : rawPasswords.keySet()) {
@@ -277,13 +275,14 @@ public class LoginX extends JavaPlugin implements Listener {
         if (e.getView().getTitle().equals(GUI_LOGIN_TITLE) || e.getView().getTitle().equals(GUI_IZIN_TITLE)) e.setCancelled(true);
     }
 
-    // --- ANTI-HILE ---
+    // --- HİLE KORUMASI MOTORU ---
+
     private void kickCheater(Player p, String reason) {
         new BukkitRunnable() {
             @Override
             public void run() {
-                p.kickPlayer(color("&#FF0000[LoginX Anti-Cheat]\n\n&#FF69B4Sebep: &e" + reason));
-                Bukkit.broadcastMessage(color("&#FF0000[Anti-Cheat] &e" + p.getName() + " &catıldı: &7" + reason));
+                p.kickPlayer(color("&#FF0000[LoginX Anti-Cheat]\n\n&fSistemimizde yasa dışı bir yazılım/hareket tespit edildi.\n\n&#FF69B4Sebep: &e" + reason));
+                Bukkit.broadcastMessage(color("&#FF0000[Anti-Cheat] &e" + p.getName() + " &cadlı oyuncu sunucudan atıldı! &8(&7" + reason + "&8)"));
             }
         }.runTask(this);
     }
@@ -295,15 +294,20 @@ public class LoginX extends JavaPlugin implements Listener {
         LinkedList<Long> clicks = clickData.get(uuid);
         clicks.add(now);
         clicks.removeIf(time -> now - time > 1000);
-        if (clicks.size() > MAX_CPS) { kickCheater(p, "Makro (CPS: " + clicks.size() + ")"); return true; }
+        
+        if (clicks.size() > MAX_CPS) {
+            kickCheater(p, "Auto-Clicker / Makro Tespit Edildi (" + clicks.size() + " CPS)");
+            return true; 
+        }
         return false;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST) 
     public void onInteract(PlayerInteractEvent e) {
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) { e.setCancelled(true); return; }
+        Player p = e.getPlayer();
+        if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
         if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK) {
-            if (checkCPS(e.getPlayer())) e.setCancelled(true);
+            if (checkCPS(p)) e.setCancelled(true);
         }
     }
 
@@ -312,9 +316,59 @@ public class LoginX extends JavaPlugin implements Listener {
         if (!(e.getDamager() instanceof Player p)) return;
         if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
         if (checkCPS(p)) { e.setCancelled(true); return; }
+
         double distance = p.getLocation().distance(e.getEntity().getLocation());
-        if (distance > MAX_REACH) { e.setCancelled(true); kickCheater(p, "Reach (Mesafe)"); }
+        if (distance > MAX_REACH) {
+            e.setCancelled(true);
+            kickCheater(p, "Reach / Hitbox (Mesafeden Vurma Hilesi)");
+            return;
+        }
+
+        Vector dir = p.getLocation().getDirection();
+        Vector toTarget = e.getEntity().getLocation().toVector().subtract(p.getLocation().toVector()).normalize();
+        double dot = dir.dot(toTarget);
+        
+        if (dot < 0.0 && distance > 1.5) { 
+            e.setCancelled(true);
+            kickCheater(p, "KillAura / TriggerBot (Baktığın Yön Uyumsuz)");
+        }
     }
+
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onBlockPlace(BlockPlaceEvent e) {
+        Player p = e.getPlayer();
+        if (!loggedIn.contains(p.getUniqueId())) { e.setCancelled(true); return; }
+
+        Material type = e.getBlock().getType();
+        if (type == Material.TNT || type == Material.BEDROCK || type == Material.LAVA || type == Material.LAVA_BUCKET) {
+            if (!trustedPlayers.contains(p.getUniqueId())) {
+                e.setCancelled(true);
+                p.sendMessage(color("&#FF0000[!] &cBu bloğu koymak için Konsol yetkisi gerekiyor!"));
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) 
+    public void onCommandProcess(PlayerCommandPreprocessEvent e) {
+        Player p = e.getPlayer();
+        String msg = e.getMessage().toLowerCase();
+
+        if (!loggedIn.contains(p.getUniqueId())) {
+            if (!msg.startsWith("/login") && !msg.startsWith("/register")) e.setCancelled(true);
+            return;
+        }
+
+        if (msg.startsWith("//") || msg.startsWith("/we ")) {
+            if (!trustedPlayers.contains(p.getUniqueId())) {
+                e.setCancelled(true);
+                p.sendMessage(color("&#FF0000[!] &cWorldEdit kullanmak için Konsol yetkisi gerekiyor!"));
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDrop(PlayerDropItemEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST) public void onDamage(EntityDamageEvent e) { if (e.getEntity() instanceof Player p && !loggedIn.contains(p.getUniqueId())) e.setCancelled(true); }
 
     // --- YARDIMCI METOTLAR ---
     private String hash(String input) {
@@ -339,9 +393,5 @@ public class LoginX extends JavaPlugin implements Listener {
         }
         return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
     }
-
-    @EventHandler(priority = EventPriority.HIGHEST) public void onMove(PlayerMoveEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockPlace(BlockPlaceEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
-    @EventHandler(priority = EventPriority.HIGHEST) public void onBlockBreak(BlockBreakEvent e) { if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true); }
                     }
-            
+                
