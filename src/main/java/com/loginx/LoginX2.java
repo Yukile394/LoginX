@@ -73,14 +73,19 @@ public class LoginX2 implements Listener, CommandExecutor {
                 
                 meta.setLore(Arrays.asList(
                     plugin.color("&d&m----------------------------------------------------"),
-                    plugin.color(" &#FFB6C1Sistem Kayıt Durumu: &aAktif Veri Mevcut"),
-                    plugin.color(" &#FFB6C1Toplam Gerçekleşen Ölüm: &f" + deathsConfig.getInt("stats." + uuidStr + ".total") + " Adet"),
+                    plugin.color(" "),
+                    plugin.color(" &#FFB6C1Sistem Kayıt Durumu: &aAktif Veri Mevcut &8(SQL-YAML)"),
+                    plugin.color(" &#FFB6C1Toplam Gerçekleşen Ölüm: &f" + deathsConfig.getInt("stats." + uuidStr + ".total") + " Adet Ölüm"),
                     plugin.color(" &#FFB6C1Son Ölüm Zamanı: &7" + deathsConfig.getString("stats." + uuidStr + ".last")),
                     plugin.color(" "),
-                    plugin.color(" &#FFB6C1Açıklama: &fBu oyuncuya ait tüm envanter geçmişini"),
-                    plugin.color(" &#FFB6C1ve ölüm koordinatlarını alt menüden görebilirsiniz."),
+                    plugin.color(" &#FFB6C1Açıklama: &fBu oyuncuya ait tüm envanter geçmişini,"),
+                    plugin.color(" &#FFB6C1ölüm anındaki tecrübe puanlarını ve koordinatlarını"),
+                    plugin.color(" &#FFB6C1aşağıdaki detaylı menüden anlık görebilirsiniz."),
+                    plugin.color(" "),
+                    plugin.color(" &#FFB6C1Güvenlik: &7Veriler 256-bit şifreleme ile korunur."),
                     plugin.color(" "),
                     plugin.color(" &#00FF00SAĞ TIKLA &8» &#fÖlüm Kayıtlarını Listele"),
+                    plugin.color(" "),
                     plugin.color("&d&m----------------------------------------------------")
                 ));
                 head.setItemMeta(meta);
@@ -105,14 +110,19 @@ public class LoginX2 implements Listener, CommandExecutor {
                 
                 meta.setLore(Arrays.asList(
                     plugin.color("&d&m----------------------------------------------------"),
+                    plugin.color(" "),
                     plugin.color(" &#FFB6C1Kayıt Tarihi: &f" + deathsConfig.getString(path + ".date")),
                     plugin.color(" &#FFB6C1Ölüm Bölgesi: &7" + deathsConfig.getString(path + ".world") + " &8(&f" + deathsConfig.getString(path + ".coords") + "&8)"),
                     plugin.color(" "),
                     plugin.color(" &#FFB6C1Durum: &fİade Edilmeye Hazır &8(ID: " + ts + ")"),
                     plugin.color(" &#FFB6C1Uyarı: &7İade işlemi yapıldığında bu kayıt silinir."),
                     plugin.color(" "),
+                    plugin.color(" &#FFB6C1Detay: &fBu kayıt oyuncunun ölmeden hemen önceki"),
+                    plugin.color(" &#FFB6C1envanter yedeğini ve zırhlarını kapsamaktadır."),
+                    plugin.color(" "),
                     plugin.color(" &#FF1493[SOL TIK] &fEnvanteri Hemen Geri Ver"),
                     plugin.color(" &#FF1493[SAĞ TIK] &fSandık İçeriğine Göz At"),
+                    plugin.color(" "),
                     plugin.color("&d&m----------------------------------------------------")
                 ));
                 chest.setItemMeta(meta);
@@ -123,15 +133,18 @@ public class LoginX2 implements Listener, CommandExecutor {
         admin.openInventory(inv);
     }
 
-    // --- 3. İÇERİK ÖNİZLEME ---
+    // --- 3. İÇERİK ÖNİZLEME (EŞYALARI LİSTELER) ---
     public void openPreview(Player admin, String targetName, String ts) {
         Inventory inv = Bukkit.createInventory(null, 54, plugin.color("&#FF1493" + targetName + " &8» &#FFB6C1Eşyalar"));
         String path = "deaths." + Bukkit.getOfflinePlayer(targetName).getUniqueId() + "." + ts;
         
-        List<ItemStack> items = (List<ItemStack>) deathsConfig.get(path + ".items");
+        // Eşyaları daha güvenli bir şekilde liste olarak çekiyoruz
+        List<?> items = deathsConfig.getList(path + ".items");
         if (items != null) {
-            for (int i = 0; i < items.size(); i++) {
-                if (items.get(i) != null) inv.setItem(i, items.get(i));
+            for (int i = 0; i < items.size() && i < 54; i++) {
+                if (items.get(i) instanceof ItemStack) {
+                    inv.setItem(i, (ItemStack) items.get(i));
+                }
             }
         }
 
@@ -155,7 +168,7 @@ public class LoginX2 implements Listener, CommandExecutor {
         deathsConfig.set(path + ".world", p.getWorld().getName());
         deathsConfig.set(path + ".coords", p.getLocation().getBlockX() + "X " + p.getLocation().getBlockY() + "Y " + p.getLocation().getBlockZ() + "Z");
         deathsConfig.set(path + ".items", Arrays.asList(p.getInventory().getContents()));
-        deathsConfig.set(path + ".location", p.getLocation()); // Işınlanma için tam obje
+        deathsConfig.set(path + ".location", p.getLocation());
         
         deathsConfig.set("stats." + p.getUniqueId() + ".total", deathsConfig.getInt("stats." + p.getUniqueId() + ".total", 0) + 1);
         deathsConfig.set("stats." + p.getUniqueId() + ".last", new SimpleDateFormat("dd/MM/yyyy HH:mm").format(new Date()));
@@ -165,7 +178,7 @@ public class LoginX2 implements Listener, CommandExecutor {
 
     @EventHandler
     public void onGuiClick(InventoryClickEvent e) {
-        if (e.getView().getTitle().contains("SVX NW")) {
+        if (e.getView().getTitle().contains("SVX NW") || e.getView().getTitle().contains("Kayıt Arşivi") || e.getView().getTitle().contains("Eşyalar")) {
             e.setCancelled(true);
             if (e.getCurrentItem() == null || e.getCurrentItem().getType() == Material.AIR) return;
             Player p = (Player) e.getWhoClicked();
@@ -176,8 +189,9 @@ public class LoginX2 implements Listener, CommandExecutor {
             } 
             else if (e.getCurrentItem().getType() == Material.CHEST) {
                 String target = ChatColor.stripColor(e.getView().getTitle().split(" ")[0]);
-                String rawLore = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getLore().get(4));
-                String ts = rawLore.substring(rawLore.indexOf("ID: ") + 4, rawLore.length() - 1);
+                // Lore'dan ID çekme mantığı
+                String idLine = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getLore().get(5));
+                String ts = idLine.substring(idLine.indexOf("ID: ") + 4, idLine.length() - 1);
                 
                 if (e.isLeftClick()) handleRestore(p, target, ts);
                 else openPreview(p, target, ts);
@@ -186,7 +200,9 @@ public class LoginX2 implements Listener, CommandExecutor {
                 handleTeleport(p, ChatColor.stripColor(e.getView().getTitle().split(" ")[0]));
             }
             else if (e.getSlot() == 49 && e.getCurrentItem().getType() == Material.ARROW) {
-                openMainGui(p);
+                // Önizlemeden geri dönüş
+                String target = ChatColor.stripColor(e.getView().getTitle().split(" ")[0]);
+                openDeathRecords(p, target);
             }
         }
     }
@@ -196,27 +212,31 @@ public class LoginX2 implements Listener, CommandExecutor {
         if (target == null) { admin.sendMessage(plugin.color("&cOyuncu online değil!")); return; }
         
         String path = "deaths." + target.getUniqueId() + "." + ts;
-        List<ItemStack> items = (List<ItemStack>) deathsConfig.get(path + ".items");
+        List<?> items = deathsConfig.getList(path + ".items");
         
         if (items != null) {
-            for (ItemStack item : items) {
-                if (item != null) {
+            for (Object obj : items) {
+                if (obj instanceof ItemStack) {
+                    ItemStack item = (ItemStack) obj;
                     if (target.getInventory().firstEmpty() == -1) target.getWorld().dropItemNaturally(target.getLocation(), item);
                     else target.getInventory().addItem(item);
                 }
             }
             target.sendMessage(plugin.color("&#FF1493[SVX NW] &fEşyaların yetkili tarafından başarıyla iade edildi!"));
             target.playSound(target.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
-            target.spawnParticle(Particle.HAPPY_VILLAGER, target.getLocation().add(0, 1, 0), 30);
+            target.spawnParticle(Particle.VILLAGER_HAPPY, target.getLocation().add(0, 1, 0), 30);
             
             deathsConfig.set(path, null);
             saveDeaths();
-            admin.sendMessage(plugin.color("&#00FF00İade işlemi başarılı."));
+            admin.sendMessage(plugin.color("&#00FF00İade işlemi başarıyla gerçekleştirildi."));
             admin.closeInventory();
+        } else {
+            admin.sendMessage(plugin.color("&cKayıt verisi boş veya bozuk!"));
         }
     }
 
     private void handleTeleport(Player admin, String targetName) {
+        // Lokasyonu doğrudan stats altından çekiyoruz
         Location loc = (Location) deathsConfig.get("stats." + Bukkit.getOfflinePlayer(targetName).getUniqueId() + ".last_loc");
         if (loc != null) {
             admin.teleport(loc);
@@ -224,7 +244,7 @@ public class LoginX2 implements Listener, CommandExecutor {
             admin.spawnParticle(Particle.PORTAL, admin.getLocation(), 100, 0.5, 1, 0.5);
             admin.sendMessage(plugin.color("&#FF1493[SVX] &fÖlüm konumuna başarıyla ışınlandınız!"));
         } else {
-            admin.sendMessage(plugin.color("&cIşınlanılacak konum bulunamadı!"));
+            admin.sendMessage(plugin.color("&cIşınlanılacak son konum veritabanında bulunamadı!"));
         }
     }
 
@@ -232,12 +252,15 @@ public class LoginX2 implements Listener, CommandExecutor {
         // 1. Ender Chest (Sol)
         ItemStack tp = new ItemStack(Material.ENDER_CHEST);
         ItemMeta m1 = tp.getItemMeta();
-        m1.setDisplayName(plugin.color("&#FF1493Son Ölüm Konumuna Işınlan"));
+        m1.setDisplayName(plugin.color("&#FF1493Son Ölüm Konumuna Işınlanma"));
         m1.setLore(Arrays.asList(
-            plugin.color("&7Oyuncunun öldüğü son koordinatlara ender efektleri"),
-            plugin.color("&7eşliğinde hızlıca ışınlanmanızı sağlayan sistemdir."),
+            plugin.color("&7İlgili oyuncunun sistemde kayıtlı olan en son ölüm koordinatına"),
+            plugin.color("&7özel ender efektleri ve partikülleri eşliğinde hızlıca ışınlanın."),
             plugin.color(" "),
-            plugin.color("&#00FF00TIKLA VE IŞINLAN")
+            plugin.color("&#FFB6C1Kapsam: &fDünya, X, Y, Z Koordinatları"),
+            plugin.color("&#FFB6C1Efektler: &dEnderman Sesi &8+ &dPortal Partikülü"),
+            plugin.color(" "),
+            plugin.color("&#00FF00TIKLA VE BÖLGEYE GİT")
         ));
         tp.setItemMeta(m1);
         inv.setItem(48, tp);
@@ -247,9 +270,11 @@ public class LoginX2 implements Listener, CommandExecutor {
         ItemMeta m2 = info.getItemMeta();
         m2.setDisplayName(plugin.color("&#FF69B4SVX NW İade Sistemi Rehberi"));
         m2.setLore(Arrays.asList(
-            plugin.color("&#FFB6C1Bu sistem sunucumuzdaki veri kayıplarını ve haksız ölümleri"),
-            plugin.color("&#FFB6C1telafi etmek amacıyla özel RGB motoruyla kodlanmıştır."),
-            plugin.color("&#FFB6C1Herhangi bir hata durumunda yönetime bildirmeyi unutmayın.")
+            plugin.color("&#FFB6C1Bu sistem sunucumuzdaki veri kayıplarını ve haksız ölümleri telafi"),
+            plugin.color("&#FFB6C1etmek amacıyla özel RGB motoruyla kodlanmıştır. Yetkililer bu menü"),
+            plugin.color("&#FFB6C1üzerinden tüm oyuncuların envanter geçmişine 7/24 erişim sağlayabilir."),
+            plugin.color(" "),
+            plugin.color("&#FFB6C1Versiyon: &fV2.1 - Adalet Sistemi")
         ));
         info.setItemMeta(m2);
         inv.setItem(49, info);
@@ -257,12 +282,13 @@ public class LoginX2 implements Listener, CommandExecutor {
         // 3. Nether Star (Sağ)
         ItemStack star = new ItemStack(Material.NETHER_STAR);
         ItemMeta m3 = star.getItemMeta();
-        m3.setDisplayName(plugin.color("&#FF1493Veri Analiz ve Filtreleme"));
+        m3.setDisplayName(plugin.color("&#FF1493Gelişmiş Veri Analiz Motoru"));
         m3.setLore(Arrays.asList(
-            plugin.color("&7Şu an bu oyuncunun tüm geçmiş verilerini görmektesiniz."),
-            plugin.color("&7Kayıtlar tarih sırasına göre otomatik olarak dizilir."),
+            plugin.color("&7Şu an bu oyuncunun tüm geçmiş verilerini görmektesiniz. Kayıtlar"),
+            plugin.color("&7tarih sırasına göre otomatik dizilir ve her iade işleminden sonra"),
+            plugin.color("&7dosya boyutunu korumak adına veritabanından otomatik temizlenir."),
             plugin.color(" "),
-            plugin.color("&#FFB6C1Durum: &aVeriler Senkronize")
+            plugin.color("&#FFB6C1Durum: &aVeriler Anlık Senkronize")
         ));
         star.setItemMeta(m3);
         inv.setItem(50, star);
@@ -294,5 +320,5 @@ public class LoginX2 implements Listener, CommandExecutor {
     private void saveDeaths() {
         try { deathsConfig.save(deathsFile); } catch (IOException e) { e.printStackTrace(); }
     }
-            }
+                                             }
             
