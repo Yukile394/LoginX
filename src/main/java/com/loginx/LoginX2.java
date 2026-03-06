@@ -22,8 +22,6 @@ public class LoginX2 implements Listener, CommandExecutor {
     private final LoginX plugin;
     private File deathsFile;
     private FileConfiguration deathsConfig;
-    
-    // Çift tetiklenmeyi engelleyen milisaniye korumaları
     private final Map<UUID, Long> clickCooldown = new HashMap<>();
     private final Map<UUID, Long> deathCooldown = new HashMap<>();
 
@@ -37,7 +35,7 @@ public class LoginX2 implements Listener, CommandExecutor {
             if (pc != null) pc.setExecutor(this);
         }
         
-        // /reload atıldığında eventlerin çift çalışmasını engeller
+        // Sunucuya /reload atıldığında eventlerin çift çalışmasını engeller
         HandlerList.unregisterAll(this);
         Bukkit.getPluginManager().registerEvents(this, plugin);
         startScoreboardTask();
@@ -225,7 +223,7 @@ public class LoginX2 implements Listener, CommandExecutor {
                 openDeathRecords(admin, headName);
             } 
             else if (e.getCurrentItem().getType() == Material.CHEST && title.contains("Kayıt Arşivi")) {
-                String idLine = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getLore().get(8)); // Yeni lore satırı indexi (8)
+                String idLine = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getLore().get(8)); // Lore satırı indexi (8)
                 String ts = idLine.substring(idLine.indexOf("ID: ") + 4, idLine.length() - 1);
                 
                 if (e.isLeftClick()) handleRestore(admin, targetName, ts);
@@ -278,13 +276,26 @@ public class LoginX2 implements Listener, CommandExecutor {
             int savedLevel = deathsConfig.getInt(path + ".level", 0);
             if (savedLevel > 0) target.setLevel(target.getLevel() + savedLevel);
             
-            target.sendMessage(plugin.color("&#FF0000[SVX NW] &#FF66FFEşyaların ve tecrübe puanın yetkili tarafından iade edildi!"));
-            target.playSound(target.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
-            target.spawnParticle(Particle.HEART, target.getLocation().add(0, 1.5, 0), 15);
+            // --- YENİ GÖRSEL VE YAZILI EFEKTLER ---
+            // 1. Oyuncunun kafasındaki HEART partikülü
+            target.spawnParticle(Particle.HEART, target.getLocation().add(0, 1.5, 0), 20);
             
+            // 2. Oyuncunun EKRANINA Kalp çıkması (Title)
+            target.sendTitle(plugin.color("&#FF0000&l♥"), "", 10, 40, 10);
+            
+            // 3. EKRANDAKİ Kalbin altında SUBTITLE olarak adminin ismi (Açık Mavi RGB Karışık)
+            new BukkitRunnable() {
+                @Override public void run() {
+                    target.sendTitle(plugin.color("&#FF0000&l♥"), plugin.color("&#33CCFF&lİade Yapan: &#66E0FF&l" + admin.getName()), 0, 40, 10);
+                    target.playSound(target.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+                }
+            }.runTaskLater(plugin, 5L); // 5 tick sonra subtitle'ı gönder (Title ile çakışmasın)
+
             deathsConfig.set(path, null);
             saveDeaths();
-            admin.sendMessage(plugin.color("&#FF0000[SVX NW] &aNokta atışı iade işlemi başarıyla tamamlandı."));
+            
+            // 4. Adminin ekranına (ACTIONBAR) Açık Mavi bildirim
+            admin.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(plugin.color("&#33CCFFİade başarıyla oyuncuya gönderildi!")));
             admin.closeInventory();
         }
     }
@@ -318,11 +329,11 @@ public class LoginX2 implements Listener, CommandExecutor {
 
         ItemStack info = new ItemStack(Material.WRITTEN_BOOK);
         ItemMeta m2 = info.getItemMeta();
-        m2.setDisplayName(plugin.color("&#FF3380Gelişmiş İade Sistemi V4"));
+        m2.setDisplayName(plugin.color("&#FF3380Gelişmiş İade Sistemi V5"));
         m2.setLore(Arrays.asList(
-            plugin.color("&fKatil bilgisi, açlık barı ve"),
-            plugin.color("&fnokta atışı slot iadesi aktiftir."),
-            plugin.color("&fGüvenli geçişler devrede.")
+            plugin.color("&fKatil bilgisi, açlık barı, XP"),
+            plugin.color("&fve nokta atışı iade aktiftir."),
+            plugin.color("&fV5: Ekran Title Efektleri!")
         ));
         info.setItemMeta(m2);
         inv.setItem(49, info);
@@ -344,15 +355,16 @@ public class LoginX2 implements Listener, CommandExecutor {
     private void decorateGui(Inventory inv) {
         ItemStack redPane = new ItemStack(Material.RED_STAINED_GLASS_PANE);
         ItemStack pinkPane = new ItemStack(Material.PINK_STAINED_GLASS_PANE);
-        ItemStack whitePane = new ItemStack(Material.WHITE_STAINED_GLASS_PANE); // RGB'ye yakışacak beyaz eklendi
+        ItemStack whitePane = new ItemStack(Material.WHITE_STAINED_GLASS_PANE); 
         
         ItemMeta rm = redPane.getItemMeta(); rm.setDisplayName(" "); redPane.setItemMeta(rm);
         ItemMeta pm = pinkPane.getItemMeta(); pm.setDisplayName(" "); pinkPane.setItemMeta(pm);
         ItemMeta wm = whitePane.getItemMeta(); wm.setDisplayName(" "); whitePane.setItemMeta(wm);
         
-        int[] redBorder = {0, 8, 45, 53}; 
-        int[] whiteBorder = {1, 7, 46, 52};
-        int[] pinkBorder = {2,3,4,5,6, 47, 51}; 
+        // Daha simetrik ve RGB uyumlu cam dizilimi
+        int[] redBorder = {0, 4, 8, 45, 49, 53}; 
+        int[] whiteBorder = {1, 3, 5, 7, 46, 48, 50, 52};
+        int[] pinkBorder = {2, 6, 47, 51}; 
         
         for (int i : redBorder) inv.setItem(i, redPane);
         for (int i : whiteBorder) inv.setItem(i, whitePane);
@@ -378,5 +390,5 @@ public class LoginX2 implements Listener, CommandExecutor {
     private void saveDeaths() {
         try { deathsConfig.save(deathsFile); } catch (IOException e) { e.printStackTrace(); }
     }
-            }
-            
+                            }
+                    
