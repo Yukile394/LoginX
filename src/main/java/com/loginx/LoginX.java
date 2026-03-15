@@ -2,405 +2,292 @@ package com.loginx;
 
 import org.bukkit.*;
 import org.bukkit.command.*;
-import org.bukkit.configuration.file.*;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
-import org.bukkit.event.entity.*;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
-import java.io.*;
-import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-/**
- * LoginX2 – Kayıt / Giriş Sistemi
- * ───────────────────────────────
- * • /register <sifre> <sifre_tekrar>
- * • /login <sifre>
- * • /sifredegis <eski> <yeni>
- * • /logingoster          (OP paneli)
- * • /izinver  /izinengelle  /izinvermenu
- * • /iade                 (ölüm eşyası iadesi)
- * • /ipban  /kickip       (IP cezaları)
- */
-public class LoginX2 implements Listener, CommandExecutor {
+public class LoginX extends JavaPlugin implements Listener {
 
-    private final LoginX core;
+    // --- SİSTEM DEĞİŞKENLERİ ---
+    private boolean chatMuted = false;
+    private final Set<UUID> staffChatEnabled = new HashSet<>();
+    private final Set<UUID> frozenPlayers = new HashSet<>(); // Dondurulan oyuncular
+    private final HashMap<UUID, Long> chatCooldown = new HashMap<>(); // Anti-Spam
+    
+    // Küfür & Reklam Filtresi
+    private final List<String> yasakliKelimeler = Arrays.asList("küfür1", "küfür2", "amk", "aq", "sg", ".com", ".net", ".tr");
+    
+    // Otomatik duyuru mesajları
+    private final List<String> duyurular = Arrays.asList(
+        "&#FFB6C1[Duyuru] &fSunucumuza destek olmak için mağazamıza göz atın!",
+        "&#FFB6C1[Duyuru] &fKurallara uymayanları Discord üzerinden bildirebilirsiniz.",
+        "&#FFB6C1[Duyuru] &fYetkili alımlarımız yakında başlayacaktır!"
+    );
+    private int duyuruIndex = 0;
 
-    // UUID → şifre hash
-    private final Map<UUID, String> passwords = new HashMap<>();
-    // UUID → giriş durumu
-    private final Set<UUID> loggedIn = new HashSet<>();
-    // UUID → yanlış şifre sayısı
-    private final Map<UUID, Integer> failCount = new HashMap<>();
-    // UUID → giriş countdown task id
-    private final Map<UUID, BukkitRunnable> loginTasks = new HashMap<>();
-    // UUID → iptal edilmemiş ölüm eşyaları listesi
-    private final Map<UUID, List<ItemStack>> deathItems = new HashMap<>();
-    // Güvenilir oyuncular (özel eşya izni)
-    private final Set<UUID> trustedPlayers = new HashSet<>();
-    // IP ban listesi
-    private final Set<String> bannedIPs = new HashSet<>();
+    @Override
+    public void onEnable() {
+        Bukkit.getPluginManager().registerEvents(this, this);
+        
+        // --- LoginX2 MODÜLÜ BAĞLANTISI ---
+        try {
+            LoginX2 modul = new LoginX2(this); 
+            Bukkit.getPluginManager().registerEvents(modul, this);
+            getLogger().info("LoginX2 modulu basariyla aktif edildi!");
+        } catch (Throwable t) {
+            getLogger().warning("LoginX2 yuklenirken bir sorun olustu veya sinif bulunamadi!");
+        }
 
-    private FileConfiguration dataConfig;
-    private File dataFile;
-
-    // ==================== CONSTRUCTOR ====================
-    public LoginX2(LoginX core) {
-        this.core = core;
-        loadData();
-        registerCommands();
+        startAutoBroadcaster();
+        getLogger().info("LoginX Premium Core Sistemleri Aktif Edildi!");
     }
 
-    // ==================== KAYIT ====================
-    private void loadData() {
-        dataFile = new File(core.getDataFolder(), "players.yml");
-        if (!dataFile.exists()) {
-            try { dataFile.createNewFile(); } catch (IOException e) { e.printStackTrace(); }
-        }
-        dataConfig = YamlConfiguration.loadConfiguration(dataFile);
+    @Override
+    public void onDisable() {
+        getLogger().info("LoginX Core devre disi.");
+    }
 
-        // Mevcut şifreleri yükle
-        if (dataConfig.contains("players")) {
-            for (String key : Objects.requireNonNull(dataConfig.getConfigurationSection("players")).getKeys(false)) {
-                try {
-                    UUID uuid = UUID.fromString(key);
-                    String hash = dataConfig.getString("players." + key + ".hash");
-                    if (hash != null) passwords.put(uuid, hash);
-                } catch (IllegalArgumentException ignored) {}
+    // --- OTOMATİK DUYURU SİSTEMİ ---
+    private void startAutoBroadcaster() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (Bukkit.getOnlinePlayers().isEmpty()) return; 
+                Bukkit.broadcastMessage(color(duyurular.get(duyuruIndex)));
+                duyuruIndex++;
+                if (duyuruIndex >= duyurular.size()) duyuruIndex = 0;
             }
-        }
-        if (dataConfig.contains("ipbans")) {
-            bannedIPs.addAll(dataConfig.getStringList("ipbans"));
-        }
+        }.runTaskTimer(this, 20L * 60, 20L * 180); 
     }
 
-    private void saveData() {
-        try { dataConfig.save(dataFile); } catch (IOException e) { e.printStackTrace(); }
-    }
-
-    // ==================== KOMUT KAYDI ====================
-    private void registerCommands() {
-        String[] cmds = {"register","login","logingoster","sifredegis","izinver","izinengelle","izinvermenu","iade","ipban","kickip"};
-        for (String c : cmds) {
-            PluginCommand cmd = core.getCommand(c);
-            if (cmd != null) cmd.setExecutor(this);
-        }
-    }
-
-    // ==================== EVENTLER ====================
+    // --- GELİŞMİŞ GİRİŞ / ÇIKIŞ (EFEKTLER VE ÖZEL EŞYA) ---
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
-        UUID uuid = p.getUniqueId();
+        
+        e.setJoinMessage(color("&#00FF00[+] &7" + p.getName() + " sunucuya katıldı!"));
+        p.sendTitle(color("&#FF69B4&lHOŞ GELDİN"), color("&fUmarım keyifli vakit geçirirsin"), 10, 60, 10);
+        
+        // Enderman Işınlanma Efekti ve Sesi
+        p.getWorld().spawnParticle(Particle.PORTAL, p.getLocation(), 150, 0.5, 1.0, 0.5, 0.1);
+        p.playSound(p.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
 
-        // IP Ban
-        String ip = Objects.requireNonNull(p.getAddress()).getAddress().getHostAddress();
-        if (bannedIPs.contains(ip)) {
-            p.kickPlayer(core.color("&#FF0000IP adresiniz banlanmıştır!"));
-            return;
-        }
-
-        // Konumunu dondur, görünmez yap
-        p.setWalkSpeed(0f);
-        p.setFlySpeed(0f);
-        p.setInvisible(true);
-
-        if (!passwords.containsKey(uuid)) {
-            showRegisterTitle(p);
-        } else {
-            showLoginTitle(p);
-            startLoginTimer(p);
+        // İlk Girişe Özel RGB Açıklamalı Eşya Verme (Sadece ilk giriş)
+        if (!p.hasPlayedBefore()) {
+            ItemStack starterItem = new ItemStack(Material.COMPASS);
+            ItemMeta meta = starterItem.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(color("&#00FFFF&lSunucu Rehberi"));
+                List<String> lore = new ArrayList<>();
+                lore.add(color("&7Bu eşya size yol gösterecektir."));
+                lore.add("");
+                lore.add(color("&#FF69B4Sahibi: &f" + p.getName()));
+                lore.add(color("&#00FF00Sağ tıklayarak menüyü açın!"));
+                meta.setLore(lore);
+                starterItem.setItemMeta(meta);
+            }
+            p.getInventory().addItem(starterItem);
+            p.sendMessage(color("&#00FFFF[!] &fAramıza ilk defa katıldığın için sana özel rehber eşyası verdik!"));
         }
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
-        loggedIn.remove(e.getPlayer().getUniqueId());
-        failCount.remove(e.getPlayer().getUniqueId());
-        cancelTask(e.getPlayer().getUniqueId());
+        e.setQuitMessage(color("&#FF0000[-] &7" + e.getPlayer().getName() + " sunucudan ayrıldı."));
+        staffChatEnabled.remove(e.getPlayer().getUniqueId());
+        frozenPlayers.remove(e.getPlayer().getUniqueId());
     }
 
-    @EventHandler
+    // --- SOHBET YÖNETİCİSİ (MENTION, SPAM, KÜFÜR, MUTE, SC) ---
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onChat(AsyncPlayerChatEvent e) {
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
-    }
+        Player p = e.getPlayer();
+        String msg = e.getMessage();
+        String lowerMsg = msg.toLowerCase();
 
-    @EventHandler
-    public void onMove(PlayerMoveEvent e) {
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) {
-            Location from = e.getFrom();
-            e.setTo(new Location(from.getWorld(), from.getX(), from.getY(), from.getZ(),
-                    e.getTo().getYaw(), e.getTo().getPitch()));
+        // 1. Yetkili Sohbeti (Staff Chat)
+        if (staffChatEnabled.contains(p.getUniqueId())) {
+            e.setCancelled(true);
+            for (Player online : Bukkit.getOnlinePlayers()) {
+                if (online.hasPermission("loginx.staff")) {
+                    online.sendMessage(color("&#FFA500[Yetkili] &f" + p.getName() + ": &e" + msg));
+                }
+            }
+            return;
+        }
+
+        // 2. Chat Kapalıysa Engelle
+        if (chatMuted && !p.hasPermission("loginx.admin")) {
+            e.setCancelled(true);
+            p.sendMessage(color("&#FF0000[!] &cSohbet şu anda yetkililer tarafından kapatılmıştır!"));
+            return;
+        }
+
+        // 3. Anti-Spam (3 saniye bekleme süresi)
+        if (!p.hasPermission("loginx.admin")) {
+            if (chatCooldown.containsKey(p.getUniqueId())) {
+                long timeLeft = (chatCooldown.get(p.getUniqueId()) - System.currentTimeMillis()) / 1000;
+                if (timeLeft > 0) {
+                    e.setCancelled(true);
+                    p.sendMessage(color("&#FF0000[!] &cTekrar mesaj göndermek için " + timeLeft + " saniye beklemelisin!"));
+                    return;
+                }
+            }
+            chatCooldown.put(p.getUniqueId(), System.currentTimeMillis() + 3000); // 3000ms = 3 saniye
+        }
+
+        // 4. Küfür ve Reklam Koruması
+        if (!p.hasPermission("loginx.admin")) {
+            for (String yasakli : yasakliKelimeler) {
+                if (lowerMsg.contains(yasakli)) {
+                    e.setCancelled(true);
+                    p.sendMessage(color("&#FF0000[!] &cMesajınız yasaklı kelime içerdiği için engellendi!"));
+                    return;
+                }
+            }
+        }
+
+        // 5. Mention (@OyuncuBahsetme Sistemi)
+        for (Player target : Bukkit.getOnlinePlayers()) {
+            if (msg.contains(target.getName())) {
+                // Mesajdaki oyuncu ismini renklendir
+                e.setMessage(msg.replace(target.getName(), color("&#00FFFF@" + target.getName() + "&r")));
+                // Bahsedilen oyuncuya bildirim sesi gönder
+                target.playSound(target.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 2.0f);
+                target.sendTitle("", color("&#00FFFF" + p.getName() + " &7senden bahsetti!"), 10, 40, 10);
+            }
         }
     }
 
+    // --- OYUNCU VE DÜNYA KORUMA SİSTEMLERİ ---
+
+    // 1. Oyuncu Hareketi: Dondurma ve Boşluk (Void) Kurtarma
     @EventHandler
-    public void onPickup(EntityPickupItemEvent e) {
-        if (e.getEntity() instanceof Player p) {
-            if (!loggedIn.contains(p.getUniqueId())) e.setCancelled(true);
+    public void onPlayerMove(PlayerMoveEvent e) {
+        Player p = e.getPlayer();
+        
+        // Dondurulmuş oyuncu hareket edemez
+        if (frozenPlayers.contains(p.getUniqueId())) {
+            // Sadece kafa çevirmesine izin ver, yürümesini engelle
+            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) {
+                e.setTo(e.getFrom()); 
+                p.sendMessage(color("&#FF0000[!] &cŞüpheli işlemler sebebiyle donduruldunuz!"));
+            }
+        }
+
+        // Void Kurtarma: Oyuncu -64 altına düşerse doğma noktasına ışınla (eşyaları gitmez)
+        if (p.getLocation().getY() < -64) {
+            Location spawn = p.getWorld().getSpawnLocation();
+            p.teleport(spawn);
+            p.setFallDistance(0); // Düşme hasarını sıfırla
+            p.playSound(p.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+            p.sendMessage(color("&#00FFFF[!] &fBoşluğa düştüğün için başlangıç noktasına kurtarıldın!"));
         }
     }
 
-    @EventHandler
-    public void onDrop(PlayerDropItemEvent e) {
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
+    // 2. Blok Koyma: Anti-Grief
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onBlockPlace(BlockPlaceEvent e) {
+        Player p = e.getPlayer();
+        Material type = e.getBlock().getType();
+        
+        if (type == Material.TNT || type == Material.BEDROCK || type == Material.LAVA || type == Material.LAVA_BUCKET) {
+            if (!p.hasPermission("loginx.build")) {
+                e.setCancelled(true);
+                p.sendMessage(color("&#FF0000[!] &cBu tehlikeli bloğu koymak için yetkiniz yok!"));
+            }
+        }
     }
 
+    // 3. Patlama Koruması: Creeper ve Wither blok kırmasın
     @EventHandler
-    public void onInteract(PlayerInteractEvent e) {
-        if (!loggedIn.contains(e.getPlayer().getUniqueId())) e.setCancelled(true);
+    public void onEntityExplode(EntityExplodeEvent e) {
+        // Patlama bloklara zarar vermesin ama can götürsün
+        e.blockList().clear(); 
     }
 
-    @EventHandler
-    public void onDeath(PlayerDeathEvent e) {
-        Player p = e.getEntity();
-        if (!trustedPlayers.contains(p.getUniqueId())) return;
-        // Güvenilir oyuncu öldü → eşyaları sakla
-        List<ItemStack> items = new ArrayList<>(e.getDrops());
-        deathItems.put(p.getUniqueId(), items);
-        e.getDrops().clear();
-        e.setDeathMessage(core.color("&#FF4500☠ &c" + p.getName() + " &7öldü! Eşyaları korunuyor..."));
-    }
-
-    // ==================== KOMUTLAR ====================
+    // --- KOMUT YÖNETİCİSİ ---
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        String name = cmd.getName().toLowerCase();
-
-        switch (name) {
-
-            // /register
-            case "register" -> {
-                if (!(sender instanceof Player p)) return true;
-                UUID uuid = p.getUniqueId();
-                if (passwords.containsKey(uuid)) {
-                    p.sendMessage(core.color("&#FF0000Zaten kayıtlısınız! /login ile giriş yapın.")); return true;
-                }
-                if (args.length < 2) {
-                    p.sendMessage(core.color("&#FF0000Kullanım: /register <sifre> <sifre_tekrar>")); return true;
-                }
-                if (!args[0].equals(args[1])) {
-                    p.sendMessage(core.color("&#FF0000Şifreler eşleşmiyor!")); return true;
-                }
-                if (args[0].length() < 6) {
-                    p.sendMessage(core.color("&#FF0000Şifre en az 6 karakter olmalı!")); return true;
-                }
-                String hash = hashSHA256(args[0]);
-                passwords.put(uuid, hash);
-                dataConfig.set("players." + uuid + ".hash", hash);
-                dataConfig.set("players." + uuid + ".ad", p.getName());
-                dataConfig.set("players." + uuid + ".kayit_tarihi", new SimpleDateFormat("dd.MM.yyyy HH:mm").format(new Date()));
-                dataConfig.set("players." + uuid + ".ip", Objects.requireNonNull(p.getAddress()).getAddress().getHostAddress());
-                saveData();
-                doLogin(p);
-                p.sendMessage(core.color("&#00FF00Başarıyla kayıt oldunuz ve giriş yaptınız!"));
-            }
-
-            // /login
-            case "login" -> {
-                if (!(sender instanceof Player p)) return true;
-                UUID uuid = p.getUniqueId();
-                if (loggedIn.contains(uuid)) {
-                    p.sendMessage(core.color("&#FFFF00Zaten giriş yaptınız!")); return true;
-                }
-                if (!passwords.containsKey(uuid)) {
-                    p.sendMessage(core.color("&#FF0000Önce /register ile kayıt olun!")); return true;
-                }
-                if (args.length == 0) {
-                    p.sendMessage(core.color("&#FF0000Kullanım: /login <sifre>")); return true;
-                }
-                if (passwords.get(uuid).equals(hashSHA256(args[0]))) {
-                    doLogin(p);
-                    failCount.remove(uuid);
-                    p.sendMessage(core.color("&#00FF00Giriş başarılı! Hoş geldiniz."));
-                } else {
-                    int fail = failCount.getOrDefault(uuid, 0) + 1;
-                    failCount.put(uuid, fail);
-                    p.sendMessage(core.color("&#FF0000Yanlış şifre! (" + fail + "/5)"));
-                    if (fail >= 5) {
-                        p.kickPlayer(core.color("&#FF0000Çok fazla yanlış şifre! Sunucudan atıldınız."));
-                        failCount.remove(uuid);
-                    }
-                }
-            }
-
-            // /sifredegis
-            case "sifredegis" -> {
-                if (!(sender instanceof Player p)) return true;
-                UUID uuid = p.getUniqueId();
-                if (!loggedIn.contains(uuid)) { p.sendMessage(core.color("&#FF0000Önce giriş yapın!")); return true; }
-                if (args.length < 2) { p.sendMessage(core.color("&#FF0000Kullanım: /sifredegis <eski_sifre> <yeni_sifre>")); return true; }
-                if (!passwords.get(uuid).equals(hashSHA256(args[0]))) {
-                    p.sendMessage(core.color("&#FF0000Eski şifre yanlış!")); return true;
-                }
-                if (args[1].length() < 6) { p.sendMessage(core.color("&#FF0000Yeni şifre en az 6 karakter olmalı!")); return true; }
-                String newHash = hashSHA256(args[1]);
-                passwords.put(uuid, newHash);
-                dataConfig.set("players." + uuid + ".hash", newHash);
-                saveData();
-                p.sendMessage(core.color("&#00FF00Şifreniz başarıyla değiştirildi!"));
-            }
-
-            // /logingoster
-            case "logingoster" -> {
-                if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(core.color("&#FF0000Yetkiniz yok!")); return true; }
-                sender.sendMessage(core.color("&#FFB6C1===== Kayıtlı Oyuncular ====="));
-                if (!dataConfig.contains("players")) { sender.sendMessage(core.color("&#FF0000Kayıt yok!")); return true; }
-                int i = 1;
-                for (String key : Objects.requireNonNull(dataConfig.getConfigurationSection("players")).getKeys(false)) {
-                    String ad   = dataConfig.getString("players." + key + ".ad", "?");
-                    String tarih = dataConfig.getString("players." + key + ".kayit_tarihi", "?");
-                    String ip   = dataConfig.getString("players." + key + ".ip", "?");
-                    sender.sendMessage(core.color("&#FFB6C1" + i + ". &f" + ad + " &8| " + tarih + " | " + ip));
-                    i++;
-                }
-            }
-
-            // /izinver
-            case "izinver" -> {
-                if (args.length == 0) { sender.sendMessage(core.color("&#FF0000Kullanım: /izinver <oyuncu>")); return true; }
-                Player hedef = Bukkit.getPlayer(args[0]);
-                if (hedef == null) { sender.sendMessage(core.color("&#FF0000Oyuncu bulunamadı!")); return true; }
-                trustedPlayers.add(hedef.getUniqueId());
-                sender.sendMessage(core.color("&#00FF00" + hedef.getName() + " güvenilir listeye eklendi."));
-                hedef.sendMessage(core.color("&#00FF00Özel eşya izni verildi! Öldüğünüzde eşyalarınız korunur."));
-            }
-
-            // /izinengelle
-            case "izinengelle" -> {
-                if (args.length == 0) { sender.sendMessage(core.color("&#FF0000Kullanım: /izinengelle <oyuncu>")); return true; }
-                Player hedef = Bukkit.getPlayer(args[0]);
-                if (hedef == null) { sender.sendMessage(core.color("&#FF0000Oyuncu bulunamadı!")); return true; }
-                trustedPlayers.remove(hedef.getUniqueId());
-                sender.sendMessage(core.color("&#FF0000" + hedef.getName() + " güvenilir listeden çıkarıldı."));
-            }
-
-            // /izinvermenu
-            case "izinvermenu" -> {
-                if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(core.color("&#FF0000Yetkiniz yok!")); return true; }
-                sender.sendMessage(core.color("&#FFB6C1===== Güvenilir Oyuncular ====="));
-                if (trustedPlayers.isEmpty()) { sender.sendMessage(core.color("&#FF0000Liste boş.")); return true; }
-                for (UUID uuid : trustedPlayers) {
-                    Player op = Bukkit.getPlayer(uuid);
-                    sender.sendMessage(core.color("&#00FF00• &f" + (op != null ? op.getName() : uuid.toString())));
-                }
-            }
-
-            // /iade
-            case "iade" -> {
-                if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(core.color("&#FF0000Yetkiniz yok!")); return true; }
-                if (args.length == 0) { sender.sendMessage(core.color("&#FF0000Kullanım: /iade <oyuncu>")); return true; }
-                Player hedef = Bukkit.getPlayer(args[0]);
-                if (hedef == null) { sender.sendMessage(core.color("&#FF0000Oyuncu çevrimiçi değil!")); return true; }
-                List<ItemStack> items = deathItems.remove(hedef.getUniqueId());
-                if (items == null || items.isEmpty()) { sender.sendMessage(core.color("&#FF0000Bu oyuncu için iade edilecek eşya yok!")); return true; }
-                for (ItemStack item : items) hedef.getInventory().addItem(item);
-                hedef.sendMessage(core.color("&#00FF00Eşyalarınız iade edildi!"));
-                sender.sendMessage(core.color("&#00FF00" + hedef.getName() + " eşyaları iade edildi."));
-            }
-
-            // /ipban
-            case "ipban" -> {
-                if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(core.color("&#FF0000Yetkiniz yok!")); return true; }
-                if (args.length == 0) { sender.sendMessage(core.color("&#FF0000Kullanım: /ipban <oyuncu|ip>")); return true; }
-                String ip = resolveIP(args[0]);
-                if (ip == null) { sender.sendMessage(core.color("&#FF0000Oyuncu çevrimiçi değil, IP bulunamadı!")); return true; }
-                bannedIPs.add(ip);
-                dataConfig.set("ipbans", new ArrayList<>(bannedIPs));
-                saveData();
-                // Aynı IPdeki herkesi at
-                for (Player online : Bukkit.getOnlinePlayers()) {
-                    String oip = Objects.requireNonNull(online.getAddress()).getAddress().getHostAddress();
-                    if (oip.equals(ip)) online.kickPlayer(core.color("&#FF0000IP adresiniz banlanmıştır!"));
-                }
-                sender.sendMessage(core.color("&#FF0000" + ip + " IP adresi banlandı."));
-            }
-
-            // /kickip
-            case "kickip" -> {
-                if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(core.color("&#FF0000Yetkiniz yok!")); return true; }
-                if (args.length == 0) { sender.sendMessage(core.color("&#FF0000Kullanım: /kickip <ip>")); return true; }
-                int count = 0;
-                for (Player online : Bukkit.getOnlinePlayers()) {
-                    String oip = Objects.requireNonNull(online.getAddress()).getAddress().getHostAddress();
-                    if (oip.equals(args[0])) { online.kickPlayer(core.color("&#FF4500IP üzerinden sunucudan atıldınız.")); count++; }
-                }
-                sender.sendMessage(core.color("&#00FF00" + count + " oyuncu atıldı."));
-            }
-
-            default -> { return false; }
+        
+        // /sil (Chat Temizleme)
+        if (cmd.getName().equalsIgnoreCase("sil")) {
+            if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(color("&#FF0000Yetkiniz yok!")); return true; }
+            for (int i = 0; i < 100; i++) Bukkit.broadcastMessage(""); 
+            Bukkit.broadcastMessage(color("&#00FF00[!] &aSohbet " + sender.getName() + " tarafından temizlendi!"));
+            return true;
         }
+
+        // /sustur (Chat Kapatma/Açma)
+        if (cmd.getName().equalsIgnoreCase("sustur")) {
+            if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(color("&#FF0000Yetkiniz yok!")); return true; }
+            chatMuted = !chatMuted;
+            if (chatMuted) Bukkit.broadcastMessage(color("&#FF0000[!] &cSohbet " + sender.getName() + " tarafından KAPATILDI!"));
+            else Bukkit.broadcastMessage(color("&#00FF00[!] &aSohbet " + sender.getName() + " tarafından AÇILDI!"));
+            return true;
+        }
+
+        // /sc (Yetkili Sohbetine Giriş/Çıkış)
+        if (cmd.getName().equalsIgnoreCase("sc")) {
+            if (!(sender instanceof Player player)) { sender.sendMessage("Sadece oyun ici!"); return true; }
+            if (!player.hasPermission("loginx.staff")) { player.sendMessage(color("&#FF0000Yetkiniz yok!")); return true; }
+            
+            UUID uuid = player.getUniqueId();
+            if (staffChatEnabled.contains(uuid)) {
+                staffChatEnabled.remove(uuid);
+                player.sendMessage(color("&#FF0000[!] &cYetkili sohbetinden çıktınız."));
+            } else {
+                staffChatEnabled.add(uuid);
+                player.sendMessage(color("&#00FF00[!] &aYetkili sohbetine girdiniz."));
+            }
+            return true;
+        }
+
+        // /dondur <oyuncu> (Yeni Özellik)
+        if (cmd.getName().equalsIgnoreCase("dondur")) {
+            if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(color("&#FF0000Yetkiniz yok!")); return true; }
+            if (args.length == 0) { sender.sendMessage(color("&#FF0000Kullanım: /dondur <oyuncu>")); return true; }
+            
+            Player target = Bukkit.getPlayer(args[0]);
+            if (target == null) { sender.sendMessage(color("&#FF0000Oyuncu bulunamadı!")); return true; }
+
+            UUID targetId = target.getUniqueId();
+            if (frozenPlayers.contains(targetId)) {
+                frozenPlayers.remove(targetId);
+                target.sendMessage(color("&#00FF00[!] &aDondurma işleminiz kaldırıldı, hareket edebilirsiniz."));
+                sender.sendMessage(color("&#00FF00" + target.getName() + " adlı oyuncunun buzu çözüldü."));
+            } else {
+                frozenPlayers.add(targetId);
+                target.sendTitle(color("&#FF0000&lDONDURULDUN!"), color("&fHile kontrolü yapılıyor, çıkış yapma!"), 10, 100, 10);
+                sender.sendMessage(color("&#FF0000" + target.getName() + " adlı oyuncu donduruldu."));
+            }
+            return true;
+        }
+
         return true;
     }
 
-    // ==================== YARDIMCI ====================
-    private void doLogin(Player p) {
-        loggedIn.add(p.getUniqueId());
-        cancelTask(p.getUniqueId());
-        p.setWalkSpeed(0.2f);
-        p.setFlySpeed(0.1f);
-        p.setInvisible(false);
-        // Kayıtlı konuma ışınla
-        dataConfig.set("players." + p.getUniqueId() + ".son_giris", new SimpleDateFormat("dd.MM.yyyy HH:mm").format(new Date()));
-        saveData();
-    }
-
-    private void startLoginTimer(Player p) {
-        int timeout = core.getConfig().getInt("login_timeout", 60);
-        BukkitRunnable task = new BukkitRunnable() {
-            int kalan = timeout;
-            @Override public void run() {
-                if (!p.isOnline()) { cancel(); return; }
-                if (loggedIn.contains(p.getUniqueId())) { cancel(); return; }
-                if (kalan <= 0) {
-                    p.kickPlayer(core.color("&#FF0000Giriş süresi doldu!"));
-                    cancel(); return;
-                }
-                p.sendTitle(core.color("&#00FFFF&lGİRİŞ YAP"), core.color("&f/login <sifre> &8| Kalan: &c" + kalan + "s"), 0, 25, 0);
-                kalan--;
-            }
-        };
-        task.runTaskTimer(core, 0L, 20L);
-        loginTasks.put(p.getUniqueId(), task);
-    }
-
-    private void cancelTask(UUID uuid) {
-        BukkitRunnable t = loginTasks.remove(uuid);
-        if (t != null) t.cancel();
-    }
-
-    private void showRegisterTitle(Player p) {
-        new BukkitRunnable() {
-            @Override public void run() {
-                if (!p.isOnline() || loggedIn.contains(p.getUniqueId())) { cancel(); return; }
-                p.sendTitle(core.color("&#FF69B4&lKAYIT OL"), core.color("&#FFB6C1&o/register <sifre> <sifre_tekrar>"), 0, 25, 0);
-            }
-        }.runTaskTimer(core, 0L, 20L);
-    }
-
-    private void showLoginTitle(Player p) {
-        // Zaten startLoginTimer ile title gönderiliyor
-    }
-
-    private String hashSHA256(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = md.digest((input + "loginx_salt_2025").getBytes("UTF-8"));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hashed) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) { return input; }
-    }
-
-    private String resolveIP(String target) {
-        Player p = Bukkit.getPlayer(target);
-        if (p != null) return Objects.requireNonNull(p.getAddress()).getAddress().getHostAddress();
-        // Direkt IP girdiyse
-        if (target.matches("\\d+\\.\\d+\\.\\d+\\.\\d+")) return target;
-        return null;
+    // --- YARDIMCI METOT (HEX RENK DESTEĞİ) ---
+    public String color(String text) {
+        Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String hex = matcher.group(1);
+            StringBuilder replacement = new StringBuilder("§x");
+            for (char c : hex.toCharArray()) replacement.append("§").append(c);
+            matcher.appendReplacement(buffer, replacement.toString());
+        }
+        return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
     }
 }
