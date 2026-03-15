@@ -1,5 +1,5 @@
 name: LoginX
-version: 1.4.0
+version: 1.5.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
@@ -20,7 +20,6 @@ commands:
   izinvermenu:
     description: Güvenilir oyuncu listesi
     permission: loginx.admin
-  # --- MODERASYON VE İADE ---
   ban:
     description: Oyuncuyu uzaklaştırır
     permission: loginx.admin
@@ -45,9 +44,28 @@ commands:
   iade:
     description: Ölen oyuncuların eşyalarını iade eder
     permission: loginx.admin
+  # --- YENİ EKLENEN SİSTEM KOMUTLARI ---
+  sil:
+    description: Sohbeti temizler
+    permission: loginx.admin
+  sustur:
+    description: Global sohbeti kapatır/açar
+    permission: loginx.admin
+  sc:
+    description: Yetkili sohbetine geçiş yapar
+    permission: loginx.staff
+  dondur:
+    description: Şüpheli oyuncuyu dondurur
+    permission: loginx.admin
 
 permissions:
   loginx.admin:
     description: LoginX sistemini yönetme yetkisi
+    default: op
+  loginx.staff:
+    description: Yetkili işlemlerini yapma yetkisi
+    default: op
+  loginx.build:
+    description: Tehlikeli blok koyma yetkisi
     default: op
     
