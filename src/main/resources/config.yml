@@ -1,3 +1,4 @@
+# --- GİRİŞ & KAYIT AYARLARI ---
 login_timeout: 60
 title_interval: 4
 title_colors:
@@ -8,10 +9,21 @@ title_colors:
     header: "&#00FFFF&lGIRIS YAP"
     footer: "&#E0FFFF&oDevam etmek için: /login <sifre>"
 
-# Moderasyon kayıtları burada tutulur
+# --- MODERASYON VE CEZA ---
 punishments:
   bans: {}
   mutes: {}
   ipbans: {}
 
 trusted_players: []
+
+# --- PREMİUM ÖZELLİK AYARLARI ---
+features:
+  chat:
+    anti_spam_saniye: 3
+    mention_ses_acik: true
+  koruma:
+    void_kurtarma_acik: true
+    creeper_blok_hasari_engelle: true
+    tnt_blok_hasari_engelle: false
+    
