@@ -1,29 +1,75 @@
-# --- GİRİŞ & KAYIT AYARLARI ---
-login_timeout: 60
-title_interval: 4
-title_colors:
+name: LoginX
+version: 1.5.0
+main: com.loginx.LoginX
+api-version: 1.21
+commands:
   register:
-    header: "&#FF69B4&lKAYIT OL"
-    footer: "&#FFB6C1&oSisteme kayıt için: /register <sifre> <sifre>"
+    description: Kayıt olma komutu
   login:
-    header: "&#00FFFF&lGIRIS YAP"
-    footer: "&#E0FFFF&oDevam etmek için: /login <sifre>"
+    description: Giriş yapma komutu
+  logingoster:
+    description: Verileri pembe menüde listeleme (OP)
+    permission: loginx.admin
+  sifredegis:
+    description: Şifre değiştirme
+    permission: loginx.admin
+  izinver:
+    description: Özel eşya izni (KONSOL)
+  izinengelle:
+    description: Özel izni kaldır (KONSOL)
+  izinvermenu:
+    description: Güvenilir oyuncu listesi
+    permission: loginx.admin
+  ban:
+    description: Oyuncuyu uzaklaştırır
+    permission: loginx.admin
+  unban:
+    description: Ban kaldırır
+    permission: loginx.admin
+  kick:
+    description: Oyuncuyu atar
+    permission: loginx.admin
+  mute:
+    description: Oyuncuyu susturur
+    permission: loginx.admin
+  unmute:
+    description: Susturma kaldırır
+    permission: loginx.admin
+  ipban:
+    description: IP adresi üzerinden banlar
+    permission: loginx.admin
+  kickip:
+    description: IP üzerinden oyuncuyu atar
+    permission: loginx.admin
+  iade:
+    description: Ölen oyuncuların eşyalarını iade eder
+    permission: loginx.admin
+  # --- YENİ EKLENEN SİSTEM KOMUTLARI ---
+  sil:
+    description: Sohbeti temizler
+    permission: loginx.admin
+  sustur:
+    description: Global sohbeti kapatır/açar
+    permission: loginx.admin
+  sc:
+    description: Yetkili sohbetine geçiş yapar
+    permission: loginx.staff
+  dondur:
+    description: Şüpheli oyuncuyu dondurur
+    permission: loginx.admin
+  # --- SMP EĞLENCE KOMUTLARI ---
+  dupe:
+    description: Elindeki eşyayı envantere 64'lük olarak kopyalar
+  itemmenu:
+    description: Oyundaki tüm eşyaların olduğu menüyü açar
 
-# --- MODERASYON VE CEZA ---
-punishments:
-  bans: {}
-  mutes: {}
-  ipbans: {}
-
-trusted_players: []
-
-# --- PREMİUM ÖZELLİK AYARLARI ---
-features:
-  chat:
-    anti_spam_saniye: 3
-    mention_ses_acik: true
-  koruma:
-    void_kurtarma_acik: true
-    creeper_blok_hasari_engelle: true
-    tnt_blok_hasari_engelle: false
-    
+permissions:
+  loginx.admin:
+    description: LoginX sistemini yönetme yetkisi
+    default: op
+  loginx.staff:
+    description: Yetkili işlemlerini yapma yetkisi
+    default: op
+  loginx.build:
+    description: Tehlikeli blok koyma yetkisi
+    default: op
