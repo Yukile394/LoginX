@@ -57,6 +57,11 @@ commands:
   dondur:
     description: Şüpheli oyuncuyu dondurur
     permission: loginx.admin
+  # --- SMP EĞLENCE KOMUTLARI ---
+  dupe:
+    description: Elindeki eşyayı envantere 64'lük olarak kopyalar
+  itemmenu:
+    description: Oyundaki tüm eşyaların olduğu menüyü açar
 
 permissions:
   loginx.admin:
@@ -68,4 +73,3 @@ permissions:
   loginx.build:
     description: Tehlikeli blok koyma yetkisi
     default: op
-    
