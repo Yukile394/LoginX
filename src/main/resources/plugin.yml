@@ -1,75 +1,30 @@
 name: LoginX
-version: 1.5.0
+version: 2.0.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
+  # --- ESKİ TEMEL KOMUTLARIN (Giriş vb.) BURADA DURABİLİR ---
   register:
     description: Kayıt olma komutu
   login:
     description: Giriş yapma komutu
-  logingoster:
-    description: Verileri pembe menüde listeleme (OP)
+  
+  # --- YENİ HOLOGRAM VE SKOR KOMUTLARI ---
+  skorkill:
+    description: Baktığın yere En Çok Öldürenler tablosunu koyar
     permission: loginx.admin
-  sifredegis:
-    description: Şifre değiştirme
+  skorzaman:
+    description: Baktığın yere En Çok Oynayanlar tablosunu koyar
     permission: loginx.admin
-  izinver:
-    description: Özel eşya izni (KONSOL)
-  izinengelle:
-    description: Özel izni kaldır (KONSOL)
-  izinvermenu:
-    description: Güvenilir oyuncu listesi
+  skorblok:
+    description: Baktığın yere En Çok Blok Kıranlar tablosunu koyar
     permission: loginx.admin
-  ban:
-    description: Oyuncuyu uzaklaştırır
+  skorsil:
+    description: Haritadaki tüm aktif skor hologramlarını temizler
     permission: loginx.admin
-  unban:
-    description: Ban kaldırır
-    permission: loginx.admin
-  kick:
-    description: Oyuncuyu atar
-    permission: loginx.admin
-  mute:
-    description: Oyuncuyu susturur
-    permission: loginx.admin
-  unmute:
-    description: Susturma kaldırır
-    permission: loginx.admin
-  ipban:
-    description: IP adresi üzerinden banlar
-    permission: loginx.admin
-  kickip:
-    description: IP üzerinden oyuncuyu atar
-    permission: loginx.admin
-  iade:
-    description: Ölen oyuncuların eşyalarını iade eder
-    permission: loginx.admin
-  # --- YENİ EKLENEN SİSTEM KOMUTLARI ---
-  sil:
-    description: Sohbeti temizler
-    permission: loginx.admin
-  sustur:
-    description: Global sohbeti kapatır/açar
-    permission: loginx.admin
-  sc:
-    description: Yetkili sohbetine geçiş yapar
-    permission: loginx.staff
-  dondur:
-    description: Şüpheli oyuncuyu dondurur
-    permission: loginx.admin
-  # --- SMP EĞLENCE KOMUTLARI ---
-  dupe:
-    description: Elindeki eşyayı envantere 64'lük olarak kopyalar
-  itemmenu:
-    description: Oyundaki tüm eşyaların olduğu menüyü açar
 
 permissions:
   loginx.admin:
-    description: LoginX sistemini yönetme yetkisi
+    description: Skor tablolarını yerleştirme yetkisi
     default: op
-  loginx.staff:
-    description: Yetkili işlemlerini yapma yetkisi
-    default: op
-  loginx.build:
-    description: Tehlikeli blok koyma yetkisi
-    default: op
+    
