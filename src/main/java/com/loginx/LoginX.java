@@ -1,6 +1,5 @@
 package com.loginx;
 
-import com.loginx.trap.*;
 import org.bukkit.*;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -20,22 +19,22 @@ import java.util.stream.Collectors;
 
 public class LoginX extends JavaPlugin implements Listener {
 
-    // --- İSTATİSTİK VERİLERİ ---
-    private final HashMap<UUID, Integer> kills = new HashMap<>();
-    private final HashMap<UUID, Integer> playtime = new HashMap<>();
+    // ── Istatistik verileri (eski sistem) ────────────────────
+    private final HashMap<UUID, Integer> kills       = new HashMap<>();
+    private final HashMap<UUID, Integer> playtime    = new HashMap<>();
     private final HashMap<UUID, Integer> blocksBroken = new HashMap<>();
 
-    // --- HOLOGRAM TAKİBİ ---
+    // ── Hologram takibi (eski sistem) ────────────────────────
     private final HashMap<Location, String> activeHolograms = new HashMap<>();
-    private final List<ArmorStand> spawnedStands = new ArrayList<>();
+    private final List<ArmorStand>          spawnedStands   = new ArrayList<>();
 
     private long nextResetTime;
 
-    // --- TRAP SİSTEMİ ---
-    private TrapManager trapManager;
-    private TrapGUI trapGUI;
-    private EconomyBridge economyBridge;
-    private TrapCommand trapCommandHandler;
+    // ── Trap sistemi ─────────────────────────────────────────
+    private TrapManager         trapManager;
+    private TrapGUI             trapGUI;
+    private EconomyBridge       economyBridge;
+    private TrapCommand         trapCommandHandler;
     private TrapHologramManager trapHologramManager;
 
     @Override
@@ -44,84 +43,66 @@ public class LoginX extends JavaPlugin implements Listener {
         saveDefaultConfig();
         loadStats();
 
-        // --- TRAP SİSTEMİ BAŞLAT ---
+        // Trap sistemi baslat
         initTrapSystem();
 
-        // --- LoginX2 MODÜLÜ BAĞLANTISI ---
+        // LoginX2 modulu
         try {
             LoginX2 modul = new LoginX2(this);
             Bukkit.getPluginManager().registerEvents(modul, this);
             getLogger().info("LoginX2 modulu basariyla aktif edildi!");
         } catch (Throwable t) {
-            getLogger().warning("LoginX2 yuklenirken bir sorun olustu veya sinif bulunamadi!");
+            getLogger().warning("LoginX2 yuklenirken sorun olustu veya sinif bulunamadi!");
         }
 
-        // --- SİSTEM GÖREVLERİ ---
         startPlaytimeTracker();
         startHologramUpdater();
         startWeeklyResetChecker();
 
-        getLogger().info("LoginX Hologram & İstatistik & Trap Sistemleri Aktif Edildi!");
+        getLogger().info("LoginX Hologram & Istatistik & Trap Sistemleri Aktif!");
     }
 
     @Override
     public void onDisable() {
         saveStats();
         clearAllHolograms();
-        if (trapManager != null) trapManager.saveAll();
+        if (trapManager != null)         trapManager.saveAll();
         if (trapHologramManager != null) trapHologramManager.clearAll();
         getLogger().info("LoginX devre disi.");
     }
 
-    // =========================================================
-    //  TRAP SİSTEMİ BAŞLATMA
-    // =========================================================
-
+    // ── Trap sistemi baslangic ────────────────────────────────
     private void initTrapSystem() {
-        // Economy (Vault)
-        economyBridge = new EconomyBridge(this);
-
-        // Trap Manager (veri yönetimi)
-        trapManager = new TrapManager(this);
-
-        // Hologram yöneticisi
+        economyBridge       = new EconomyBridge(this);
+        trapManager         = new TrapManager(this);
         trapHologramManager = new TrapHologramManager(this);
         trapHologramManager.setTrapManager(trapManager);
+        trapGUI             = new TrapGUI(trapManager, economyBridge);
+        trapCommandHandler  = new TrapCommand(trapManager, trapGUI, economyBridge, trapHologramManager);
 
-        // GUI
-        trapGUI = new TrapGUI(trapManager, economyBridge);
-
-        // Komut işleyici
-        trapCommandHandler = new TrapCommand(trapManager, trapGUI, economyBridge, trapHologramManager);
-
-        // Komutları kaydet
         PluginCommand trapCmd = getCommand("trap");
         if (trapCmd != null) {
             trapCmd.setExecutor(trapCommandHandler);
         } else {
-            getLogger().warning("[Trap] /trap komutu plugin.yml'de tanımlı değil!");
+            getLogger().warning("[Trap] /trap komutu plugin.yml'de tanimli degil!");
         }
 
-        // Dinleyici
         TrapListener trapListener = new TrapListener(
                 trapManager, trapGUI, economyBridge, trapCommandHandler, trapHologramManager);
         Bukkit.getPluginManager().registerEvents(trapListener, this);
 
-        getLogger().info("[Trap] Trap sistemi başarıyla başlatıldı!");
+        getLogger().info("[Trap] Trap sistemi basariyla baslatildi!");
     }
 
-    // =========================================================
-    //  KOMUT YÖNETİCİSİ (eski komutlar korundu)
-    // =========================================================
+    // ── Komutlar (eski sistem korundu) ────────────────────────
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player p)) {
-            sender.sendMessage("Sadece oyun içi kullanılabilir!");
+            sender.sendMessage("Sadece oyun ici kullanilabilir!");
             return true;
         }
-
         if (!p.hasPermission("loginx.admin")) {
-            p.sendMessage(color("&#FF0000[!] &cBu komut için yetkiniz yok!"));
+            p.sendMessage(color("&#FF0000[!] &cBu komut icin yetkiniz yok!"));
             return true;
         }
 
@@ -129,39 +110,32 @@ public class LoginX extends JavaPlugin implements Listener {
 
         if (cmd.getName().equalsIgnoreCase("skorkill")) {
             spawnHologram(targetLoc, "KILLS");
-            p.sendMessage(color("&#00FF00[!] &aÖldürme sıralaması baktığın yere oluşturuldu!"));
+            p.sendMessage(color("&#00FF00[!] &aOldurme siralaması baktığın yere olusturuldu!"));
             return true;
         }
-
         if (cmd.getName().equalsIgnoreCase("skorzaman")) {
             spawnHologram(targetLoc, "PLAYTIME");
-            p.sendMessage(color("&#00FF00[!] &aOynama süresi sıralaması baktığın yere oluşturuldu!"));
+            p.sendMessage(color("&#00FF00[!] &aOynama suresi siralaması baktığın yere olusturuldu!"));
             return true;
         }
-
         if (cmd.getName().equalsIgnoreCase("skorblok")) {
             spawnHologram(targetLoc, "BLOCKS");
-            p.sendMessage(color("&#00FF00[!] &aBlok kırma sıralaması baktığın yere oluşturuldu!"));
+            p.sendMessage(color("&#00FF00[!] &aBlok kirma siralaması baktığın yere olusturuldu!"));
             return true;
         }
-
         if (cmd.getName().equalsIgnoreCase("skorsil")) {
             clearAllHolograms();
             activeHolograms.clear();
-            p.sendMessage(color("&#FF0000[!] &cTüm aktif skor hologramları silindi!"));
+            p.sendMessage(color("&#FF0000[!] &cTum aktif skor hologramlari silindi!"));
             return true;
         }
-
         return true;
     }
 
-    // =========================================================
-    //  EVENTLER (eski sistem - istatistikler)
-    // =========================================================
+    // ── Eventler (eski sistem korundu) ────────────────────────
     @EventHandler
     public void onKill(PlayerDeathEvent e) {
-        Player victim = e.getEntity();
-        Player killer = victim.getKiller();
+        Player killer = e.getEntity().getKiller();
         if (killer != null) {
             UUID id = killer.getUniqueId();
             kills.put(id, kills.getOrDefault(id, 0) + 1);
@@ -174,13 +148,10 @@ public class LoginX extends JavaPlugin implements Listener {
         blocksBroken.put(id, blocksBroken.getOrDefault(id, 0) + 1);
     }
 
-    // =========================================================
-    //  GÖREVLER (eski sistem korundu)
-    // =========================================================
+    // ── Gorevler (eski sistem korundu) ────────────────────────
     private void startPlaytimeTracker() {
         new BukkitRunnable() {
-            @Override
-            public void run() {
+            @Override public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     UUID id = p.getUniqueId();
                     playtime.put(id, playtime.getOrDefault(id, 0) + 1);
@@ -191,35 +162,29 @@ public class LoginX extends JavaPlugin implements Listener {
 
     private void startHologramUpdater() {
         new BukkitRunnable() {
-            @Override
-            public void run() {
+            @Override public void run() {
                 if (activeHolograms.isEmpty()) return;
                 clearAllHolograms();
-                for (Map.Entry<Location, String> entry : activeHolograms.entrySet()) {
+                for (Map.Entry<Location, String> entry : activeHolograms.entrySet())
                     buildHologramLines(entry.getKey(), entry.getValue());
-                }
             }
         }.runTaskTimer(this, 100L, 100L);
     }
 
     private void startWeeklyResetChecker() {
         new BukkitRunnable() {
-            @Override
-            public void run() {
+            @Override public void run() {
                 if (System.currentTimeMillis() >= nextResetTime) {
-                    kills.clear();
-                    playtime.clear();
-                    blocksBroken.clear();
+                    kills.clear(); playtime.clear(); blocksBroken.clear();
                     setNextResetTime();
-                    Bukkit.broadcastMessage(color("&#00FFFF[!] &lHAFTALIK SIFIRLAMA! &fTüm skor tabloları sıfırlandı. Yeni haftada başarılar!"));
+                    Bukkit.broadcastMessage(color(
+                            "&#00FFFF[!] &lHAFTALIK SIFIRLAMA! &fTum skor tablolari sifirlandı."));
                 }
             }
         }.runTaskTimer(this, 20L * 60, 20L * 60 * 60);
     }
 
-    // =========================================================
-    //  HOLOGRAM (eski sistem - skor tabloları korundu)
-    // =========================================================
+    // ── Hologram (eski sistem korundu) ────────────────────────
     private void spawnHologram(Location loc, String type) {
         activeHolograms.put(loc, type);
         buildHologramLines(loc, type);
@@ -228,21 +193,22 @@ public class LoginX extends JavaPlugin implements Listener {
     private void buildHologramLines(Location baseLoc, String type) {
         List<String> lines = new ArrayList<>();
         if (type.equals("KILLS")) {
-            lines.add("&#FF0000&l⚔ EN ÇOK ÖLDÜRENLER ⚔");
-            lines.addAll(getTop10(kills, "Öldürme"));
+            lines.add("&#FF0000&l⚔ EN COK OLDURENLER ⚔");
+            lines.addAll(getTop10(kills, "Oldurme"));
         } else if (type.equals("PLAYTIME")) {
-            lines.add("&#00FFFF&l⏳ EN ÇOK OYNAYANLAR ⏳");
+            lines.add("&#00FFFF&l⏳ EN COK OYNAYANLAR ⏳");
             lines.addAll(getTop10Playtime(playtime));
         } else if (type.equals("BLOCKS")) {
-            lines.add("&#00FF00&l⛏ EN ÇOK BLOK KIRANLAR ⛏");
+            lines.add("&#00FF00&l⛏ EN COK BLOK KIRANLAR ⛏");
             lines.addAll(getTop10(blocksBroken, "Blok"));
         }
-        lines.add("&7(Her hafta sıfırlanır)");
+        lines.add("&7(Her hafta sifirlanir)");
 
         double yOffset = 0;
         for (String line : lines) {
             Location spawnLoc = baseLoc.clone().subtract(0, yOffset, 0);
-            ArmorStand stand = (ArmorStand) baseLoc.getWorld().spawnEntity(spawnLoc, EntityType.ARMOR_STAND);
+            ArmorStand stand = (ArmorStand) baseLoc.getWorld()
+                    .spawnEntity(spawnLoc, EntityType.ARMOR_STAND);
             stand.setVisible(false);
             stand.setCustomNameVisible(true);
             stand.setCustomName(color(line));
@@ -255,18 +221,15 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void clearAllHolograms() {
-        for (ArmorStand stand : spawnedStands) {
+        for (ArmorStand stand : spawnedStands)
             if (stand != null && !stand.isDead()) stand.remove();
-        }
         spawnedStands.clear();
     }
 
-    // =========================================================
-    //  SIRALAMA (eski sistem korundu)
-    // =========================================================
+    // ── Siralama (eski sistem korundu) ────────────────────────
     private List<String> getTop10(HashMap<UUID, Integer> map, String suffix) {
         List<String> lines = new ArrayList<>();
-        if (map.isEmpty()) { lines.add("&cHenüz veri yok..."); return lines; }
+        if (map.isEmpty()) { lines.add("&cHenuz veri yok..."); return lines; }
         List<Map.Entry<UUID, Integer>> sorted = map.entrySet().stream()
                 .sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed())
                 .limit(10).collect(Collectors.toList());
@@ -274,7 +237,7 @@ public class LoginX extends JavaPlugin implements Listener {
         for (Map.Entry<UUID, Integer> entry : sorted) {
             String name = Bukkit.getOfflinePlayer(entry.getKey()).getName();
             if (name == null) name = "Bilinmiyor";
-            String rankColor = rank == 1 ? "&#FFD700" : (rank == 2 ? "&#C0C0C0" : (rank == 3 ? "&#CD7F32" : "&e"));
+            String rankColor = rank == 1 ? "&#FFD700" : rank == 2 ? "&#C0C0C0" : rank == 3 ? "&#CD7F32" : "&e";
             lines.add(color(rankColor + rank + ". &f" + name + " &7- &a" + entry.getValue() + " " + suffix));
             rank++;
         }
@@ -283,7 +246,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
     private List<String> getTop10Playtime(HashMap<UUID, Integer> map) {
         List<String> lines = new ArrayList<>();
-        if (map.isEmpty()) { lines.add("&cHenüz veri yok..."); return lines; }
+        if (map.isEmpty()) { lines.add("&cHenuz veri yok..."); return lines; }
         List<Map.Entry<UUID, Integer>> sorted = map.entrySet().stream()
                 .sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed())
                 .limit(10).collect(Collectors.toList());
@@ -291,70 +254,61 @@ public class LoginX extends JavaPlugin implements Listener {
         for (Map.Entry<UUID, Integer> entry : sorted) {
             String name = Bukkit.getOfflinePlayer(entry.getKey()).getName();
             if (name == null) name = "Bilinmiyor";
-            int totalMins = entry.getValue();
-            int hours = totalMins / 60;
-            int mins = totalMins % 60;
-            String timeStr = hours > 0 ? hours + "s " + mins + "d" : mins + "d";
-            String rankColor = rank == 1 ? "&#FFD700" : (rank == 2 ? "&#C0C0C0" : (rank == 3 ? "&#CD7F32" : "&e"));
-            lines.add(color(rankColor + rank + ". &f" + name + " &7- &a" + timeStr));
+            int h = entry.getValue() / 60, m = entry.getValue() % 60;
+            String time = h > 0 ? h + "s " + m + "d" : m + "d";
+            String rankColor = rank == 1 ? "&#FFD700" : rank == 2 ? "&#C0C0C0" : rank == 3 ? "&#CD7F32" : "&e";
+            lines.add(color(rankColor + rank + ". &f" + name + " &7- &a" + time));
             rank++;
         }
         return lines;
     }
 
-    // =========================================================
-    //  VERİ KAYDETME / YÜKLEME (eski sistem korundu)
-    // =========================================================
+    // ── Veri kaydetme / yukleme (eski sistem korundu) ─────────
     private void saveStats() {
         FileConfiguration config = getConfig();
         config.set("next_reset", nextResetTime);
-        for (Map.Entry<UUID, Integer> entry : kills.entrySet())
-            config.set("stats.kills." + entry.getKey().toString(), entry.getValue());
-        for (Map.Entry<UUID, Integer> entry : playtime.entrySet())
-            config.set("stats.playtime." + entry.getKey().toString(), entry.getValue());
-        for (Map.Entry<UUID, Integer> entry : blocksBroken.entrySet())
-            config.set("stats.blocks." + entry.getKey().toString(), entry.getValue());
+        kills.forEach((k, v)        -> config.set("stats.kills." + k, v));
+        playtime.forEach((k, v)     -> config.set("stats.playtime." + k, v));
+        blocksBroken.forEach((k, v) -> config.set("stats.blocks." + k, v));
         saveConfig();
     }
 
     private void loadStats() {
         FileConfiguration config = getConfig();
-        if (config.contains("next_reset")) {
-            nextResetTime = config.getLong("next_reset");
-        } else {
-            setNextResetTime();
-        }
-        if (config.contains("stats.kills")) {
-            for (String uuidStr : config.getConfigurationSection("stats.kills").getKeys(false))
-                kills.put(UUID.fromString(uuidStr), config.getInt("stats.kills." + uuidStr));
-        }
-        if (config.contains("stats.playtime")) {
-            for (String uuidStr : config.getConfigurationSection("stats.playtime").getKeys(false))
-                playtime.put(UUID.fromString(uuidStr), config.getInt("stats.playtime." + uuidStr));
-        }
-        if (config.contains("stats.blocks")) {
-            for (String uuidStr : config.getConfigurationSection("stats.blocks").getKeys(false))
-                blocksBroken.put(UUID.fromString(uuidStr), config.getInt("stats.blocks." + uuidStr));
-        }
+        nextResetTime = config.contains("next_reset")
+                ? config.getLong("next_reset") : calcNextReset();
+
+        if (config.contains("stats.kills"))
+            config.getConfigurationSection("stats.kills").getKeys(false)
+                    .forEach(s -> kills.put(UUID.fromString(s), config.getInt("stats.kills." + s)));
+        if (config.contains("stats.playtime"))
+            config.getConfigurationSection("stats.playtime").getKeys(false)
+                    .forEach(s -> playtime.put(UUID.fromString(s), config.getInt("stats.playtime." + s)));
+        if (config.contains("stats.blocks"))
+            config.getConfigurationSection("stats.blocks").getKeys(false)
+                    .forEach(s -> blocksBroken.put(UUID.fromString(s), config.getInt("stats.blocks." + s)));
     }
 
     private void setNextResetTime() {
-        this.nextResetTime = System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000);
+        this.nextResetTime = calcNextReset();
     }
 
-    // =========================================================
-    //  YARDIMCI (HEX RENK) - ortak metot
-    // =========================================================
+    private long calcNextReset() {
+        return System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000);
+    }
+
+    // ── Hex renk yardimcisi ───────────────────────────────────
     public String color(String text) {
         Pattern pattern = Pattern.compile("&#([a-fA-F0-9]{6})");
         Matcher matcher = pattern.matcher(text);
         StringBuffer buffer = new StringBuffer();
         while (matcher.find()) {
             String hex = matcher.group(1);
-            StringBuilder replacement = new StringBuilder("§x");
-            for (char c : hex.toCharArray()) replacement.append("§").append(c);
+            StringBuilder replacement = new StringBuilder("\u00a7x");
+            for (char c : hex.toCharArray()) replacement.append('\u00a7').append(c);
             matcher.appendReplacement(buffer, replacement.toString());
         }
-        return ChatColor.translateAlternateColorCodes('&', matcher.appendTail(buffer).toString());
+        return ChatColor.translateAlternateColorCodes('&',
+                matcher.appendTail(buffer).toString());
     }
 }
