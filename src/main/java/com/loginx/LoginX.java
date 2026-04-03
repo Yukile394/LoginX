@@ -60,6 +60,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // --- LoginX2 MODÜLÜ BAĞLANTISI ---  
         try {
+            // Sınıfı sunucunda kullanıyorsan aşağıdaki yorum satırlarını kaldırabilirsin
             // LoginX2 modul = new LoginX2(this);   
             // Bukkit.getPluginManager().registerEvents(modul, this);  
             getLogger().info("LoginX2 modulu basariyla aktif edildi!");
@@ -438,7 +439,7 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskTimer(this, 100L, 100L);
     }
 
-    // YENİ: Trap Hologram Güncelleyici (Dinamik ve Resimdeki gibi Pembe konseptli)
+    // YENİ: Trap Hologram Güncelleyici
     private void startTrapHologramUpdater() {
         new BukkitRunnable() {
             @Override
@@ -475,5 +476,4 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void buildHologramLines(Location baseLoc, String type) {
-        List<String> lines = new ArrayList<>();
-        if (type.equal
+        List<String> lin
