@@ -2,11 +2,14 @@ name: LoginX
 version: 2.0.0
 main: com.loginx.LoginX
 api-version: 1.21
+depend: [Vault]
 commands:
   register:
     description: Kayıt olma komutu
   login:
     description: Giriş yapma komutu
+  
+  # Hologram ve İstatistik Komutları
   skorkill:
     description: Baktığın yere En Çok Öldürenler tablosunu koyar
     permission: loginx.admin
@@ -19,12 +22,25 @@ commands:
   skorsil:
     description: Haritadaki tüm aktif skor hologramlarını temizler
     permission: loginx.admin
+
+  # Trap PvP Sistemi Komutları
   trap:
-    description: Trap sistemi ana komutu. Satın alma, satma, banka, davet vb.
-    aliases: [trapsistemi, hucre]
+    description: Trap ana komutu (Menü açar ve oyuncu işlemlerini yönetir)
+  trapyap:
+    description: Seçili alanı Trap olarak kaydeder (Admin)
+    permission: loginx.admin
+  trapsil:
+    description: Bir trapi siler (Admin)
+    permission: loginx.admin
+  trapbalta:
+    description: Trap alanı seçmek için balta verir (Admin)
+    permission: loginx.admin
+  trapholo:
+    description: Baktığın yere Trap hologramı koyar (Admin)
+    permission: loginx.admin
 
 permissions:
   loginx.admin:
-    description: Trap ve skor tabloları yönetim yetkisi
+    description: Skor ve Trap yönetim yetkisi
     default: op
     
