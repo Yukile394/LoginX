@@ -3,13 +3,10 @@ version: 2.0.0
 main: com.loginx.LoginX
 api-version: 1.21
 commands:
-  # --- ESKİ TEMEL KOMUTLARIN (Giriş vb.) BURADA DURABİLİR ---
   register:
     description: Kayıt olma komutu
   login:
     description: Giriş yapma komutu
-  
-  # --- YENİ HOLOGRAM VE SKOR KOMUTLARI ---
   skorkill:
     description: Baktığın yere En Çok Öldürenler tablosunu koyar
     permission: loginx.admin
@@ -22,9 +19,12 @@ commands:
   skorsil:
     description: Haritadaki tüm aktif skor hologramlarını temizler
     permission: loginx.admin
+  trap:
+    description: Trap sistemi ana komutu. Satın alma, satma, banka, davet vb.
+    aliases: [trapsistemi, hucre]
 
 permissions:
   loginx.admin:
-    description: Skor tablolarını yerleştirme yetkisi
+    description: Trap ve skor tabloları yönetim yetkisi
     default: op
     
