@@ -2,393 +2,294 @@ package com.loginx;
 
 import org.bukkit.*;
 import org.bukkit.command.*;
-import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.event.*;
-import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.*;
-import org.bukkit.inventory.meta.*;
-import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scoreboard.*;
-import java.io.File;
-import java.io.IOException;
-import java.text.SimpleDateFormat;
+import org.bukkit.inventory.meta.ItemMeta;
+
 import java.util.*;
 
-public class LoginX2 implements Listener, CommandExecutor {
+class TrapGUI {
+    static final String MKT  = "\u00a75\u00a7lTum Trapler";
+    static final String MENU = "\u00a7d\u00a7lTrap Menusu";
+    static final String CNF  = "\u00a74\u00a7lSatin Al";
 
-    private final LoginX plugin;
-    private File deathsFile;
-    private FileConfiguration deathsConfig;
-    private final Map<UUID, Long> clickCooldown = new HashMap<>();
-    private final Map<UUID, Long> deathCooldown = new HashMap<>();
+    private final TrapX mgr;
+    private final EconomyBridge eco;
 
-    public LoginX2(LoginX plugin) {
-        this.plugin = plugin;
-        setupFiles();
-        
-        String[] cmds = {"iade", "player"};
-        for (String c : cmds) {
-            PluginCommand pc = plugin.getCommand(c);
-            if (pc != null) pc.setExecutor(this);
+    TrapGUI(TrapX mgr, EconomyBridge eco) { this.mgr=mgr; this.eco=eco; }
+
+    void openMarket(Player p) {
+        List<TrapData> list = mgr.market();
+        int pages = Math.max(1,(int)Math.ceil(list.size()/45.0));
+        Inventory inv = Bukkit.createInventory(null,54,MKT+" \u00a78- Sayfa 1/"+pages);
+        ItemStack bg = mk(Material.GRAY_STAINED_GLASS_PANE,"\u00a7r",null);
+        for (int i=45;i<54;i++) inv.setItem(i,bg);
+        int slot=0;
+        for (TrapData td : list) {
+            if (slot>=45) break;
+            inv.setItem(slot++, mkTrapItem(td));
         }
-        
-        // Sunucuya /reload atıldığında eventlerin çift çalışmasını engeller
-        HandlerList.unregisterAll(this);
-        Bukkit.getPluginManager().registerEvents(this, plugin);
-        startScoreboardTask();
+        if (list.isEmpty()) inv.setItem(22,mk(Material.BARRIER,"\u00a7c\u00a7lSatista Trap Yok",null));
+        inv.setItem(53,mk(Material.RED_STAINED_GLASS_PANE,"\u00a7c\u00a7lKapat",null));
+        p.openInventory(inv);
     }
 
-    private void setupFiles() {
-        deathsFile = new File(plugin.getDataFolder(), "deaths.yml");
-        if (!deathsFile.exists()) {
-            try { deathsFile.createNewFile(); } catch (IOException e) { e.printStackTrace(); }
+    private ItemStack mkTrapItem(TrapData td) {
+        List<String> l = new ArrayList<>();
+        l.add("\u00a75\u00a7m                    ");
+        l.add("\u00a7dSahibi: \u00a7f"+td.getOwnerName());
+        l.add("\u00a7dSatilik: \u00a7aEvet");
+        l.add("\u00a7dFiyat: \u00a76"+String.format("%.0f",td.getSalePrice()));
+        l.add("\u00a7dBoyut: \u00a7f"+td.getSize());
+        l.add("\u00a7dUye: \u00a7f"+td.getMemberCount());
+        l.add("\u00a7dBanka: \u00a7a$"+String.format("%.0f",td.getBank()));
+        l.add("\u00a75\u00a7m                    ");
+        l.add("\u00a7e\u00a7lTiklayarak satin alin");
+        l.add("\u00a77minecraft:chest");
+        l.add("\u00a78ID:"+td.getId());
+        return mk(Material.CHEST,"\u00a75\u00a7lTrap \u00a7d#"+td.getId(),l);
+    }
+
+    void openMenu(Player p, TrapData td) {
+        Inventory inv = Bukkit.createInventory(null,27,MENU+" \u00a78#"+td.getId());
+        ItemStack bg = mk(Material.PURPLE_STAINED_GLASS_PANE,"\u00a7r",null);
+        for (int i=0;i<27;i++) inv.setItem(i,bg);
+        boolean own = td.getOwner().equals(p.getUniqueId());
+        List<String> il = new ArrayList<>();
+        il.add("\u00a75\u00a7m                    ");
+        il.add("\u00a7dSahip: \u00a7f"+td.getOwnerName());
+        il.add("\u00a7dBanka: \u00a7a$"+String.format("%.2f",td.getBank()));
+        il.add("\u00a7dUye: \u00a7f"+td.getMemberCount());
+        il.add("\u00a7dBoyut: \u00a7f"+td.getSize());
+        il.add("\u00a7dSatilik: "+(td.isForSale()?"\u00a7aEvet \u00a77($"+String.format("%.0f",td.getSalePrice())+")":"\u00a7cHayir"));
+        il.add("\u00a75\u00a7m                    ");
+        inv.setItem(13,mk(Material.NETHER_STAR,"\u00a7d\u00a7lTrap #"+td.getId(),il));
+        inv.setItem(10,mk(Material.GOLD_INGOT,"\u00a76\u00a7lPara Yatir", Collections.singletonList("\u00a77/trap parayatir <miktar>")));
+        inv.setItem(11,mk(Material.GOLD_NUGGET,"\u00a7e\u00a7lPara Cek",Collections.singletonList("\u00a77/trap paracek <miktar>")));
+        inv.setItem(15,mk(Material.ENDER_PEARL,"\u00a7b\u00a7lTrapa Isinlan",Collections.singletonList("\u00a77Spawn noktasina isinlan.")));
+        if (own) {
+            inv.setItem(16,mk(Material.PLAYER_HEAD,"\u00a7a\u00a7lUye Davet",Collections.singletonList("\u00a77/trap davet <oyuncu>")));
+            inv.setItem(12,mk(Material.BARRIER,"\u00a7c\u00a7lUye At",Collections.singletonList("\u00a77/trap kick <oyuncu>")));
+            inv.setItem(14, td.isForSale()
+                ? mk(Material.RED_BANNER,"\u00a7c\u00a7lSatistan Kaldir",Collections.singletonList("\u00a77/trap gericek"))
+                : mk(Material.GREEN_BANNER,"\u00a7a\u00a7lSatisa Cikar",Collections.singletonList("\u00a77/trap sat <fiyat>")));
         }
-        deathsConfig = YamlConfiguration.loadConfiguration(deathsFile);
+        inv.setItem(26,mk(Material.RED_STAINED_GLASS_PANE,"\u00a7c\u00a7lKapat",null));
+        p.openInventory(inv);
+    }
+
+    void openConfirm(Player p, TrapData td) {
+        Inventory inv = Bukkit.createInventory(null,27,CNF);
+        ItemStack bg = mk(Material.BLACK_STAINED_GLASS_PANE,"\u00a7r",null);
+        for (int i=0;i<27;i++) inv.setItem(i,bg);
+        List<String> l = new ArrayList<>();
+        l.add("\u00a75\u00a7m                    ");
+        l.add("\u00a7dSahip: \u00a7f"+td.getOwnerName());
+        l.add("\u00a7dFiyat: \u00a76$"+String.format("%.0f",td.getSalePrice()));
+        l.add("\u00a7dBoyut: \u00a7f"+td.getSize());
+        l.add("\u00a7dBanka: \u00a7a$"+String.format("%.0f",td.getBank()));
+        l.add("\u00a75\u00a7m                    ");
+        inv.setItem(13,mk(Material.CHEST,"\u00a75\u00a7lTrap #"+td.getId(),l));
+        inv.setItem(11,mk(Material.LIME_STAINED_GLASS_PANE,"\u00a7a\u00a7l\u2714 SATIN AL",Arrays.asList("\u00a77$"+String.format("%.0f",td.getSalePrice())+" odenecek.","\u00a7aOnaylamak icin tikla!")));
+        inv.setItem(15,mk(Material.RED_STAINED_GLASS_PANE,"\u00a7c\u00a7l\u2718 IPTAL",Collections.singletonList("\u00a77Vazgec.")));
+        inv.setItem(0,mk(Material.PAPER,"\u00a78ID:"+td.getId(),null));
+        p.openInventory(inv);
+    }
+
+    static ItemStack mk(Material mat, String name, List<String> lore) {
+        ItemStack i = new ItemStack(mat);
+        ItemMeta m = i.getItemMeta();
+        if (m!=null) { m.setDisplayName(name); if (lore!=null) m.setLore(lore); i.setItemMeta(m); }
+        return i;
+    }
+}
+
+public class TrapX2 implements CommandExecutor {
+    private final TrapX mgr;
+    private final TrapGUI gui;
+    private final EconomyBridge eco;
+    private final TrapX3 listener;
+    final Map<UUID,Integer> active = new HashMap<>();
+
+    public TrapX2(TrapX mgr, TrapGUI gui, EconomyBridge eco, TrapX3 listener) {
+        this.mgr=mgr; this.gui=gui; this.eco=eco; this.listener=listener;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player)) return true;
-        Player p = (Player) sender;
-        if (!p.hasPermission("loginx.admin")) return true;
-
-        if (label.equalsIgnoreCase("iade") || (label.equalsIgnoreCase("player") && args.length > 0 && args[0].equalsIgnoreCase("all"))) {
-            openMainGui(p);
-            return true;
+        if (!(sender instanceof Player p)) { sender.sendMessage("Sadece oyuncu!"); return true; }
+        if (args.length==0) { gui.openMarket(p); return true; }
+        String sub = args[0].toLowerCase();
+        switch(sub) {
+            case "yap" -> {
+                if (!p.hasPermission("loginx.trap.admin")) { p.sendMessage(c("&cYetki yok!")); return true; }
+                if (!mgr.hasBoth(p.getUniqueId())) { p.sendMessage(c("&cOnce balta ile 2 kose sec!")); return true; }
+                double price=0;
+                if (args.length>=2) { try { price=Double.parseDouble(args[1]); } catch(NumberFormatException e){ p.sendMessage(c("&cGecersiz fiyat!")); return true; } }
+                TrapData td = mgr.create(p.getUniqueId(),p.getName(),mgr.getP1(p.getUniqueId()),mgr.getP2(p.getUniqueId()),price);
+                mgr.clearSel(p.getUniqueId());
+                active.put(p.getUniqueId(),td.getId());
+                p.sendMessage(c("&a&lTrap #"+td.getId()+" olusturuldu! Boyut: "+td.getSize()+" Fiyat: $"+String.format("%.0f",price)));
+            }
+            case "sil" -> {
+                if (!p.hasPermission("loginx.trap.admin")) { p.sendMessage(c("&cYetki yok!")); return true; }
+                if (args.length<2) { p.sendMessage(c("&c/trap sil <id>")); return true; }
+                try {
+                    int id=Integer.parseInt(args[1]);
+                    if (mgr.delete(id)) { listener.removeHolo(id); p.sendMessage(c("&aTrap #"+id+" silindi.")); }
+                    else p.sendMessage(c("&cTrap bulunamadi!"));
+                } catch(NumberFormatException e){ p.sendMessage(c("&cGecersiz ID!")); }
+            }
+            case "hologram" -> {
+                if (!p.hasPermission("loginx.trap.admin")) { p.sendMessage(c("&cYetki yok!")); return true; }
+                TrapData td = mgr.at(p.getLocation());
+                if (td==null) { p.sendMessage(c("&cBir trapin icinde dur!")); return true; }
+                listener.spawnHolo(td, p.getLocation().add(0,3,0));
+                p.sendMessage(c("&aTrap #"+td.getId()+" hologrami olusturuldu!"));
+            }
+            case "hologramsil" -> {
+                if (!p.hasPermission("loginx.trap.admin")) { p.sendMessage(c("&cYetki yok!")); return true; }
+                listener.clearAllHolo();
+                p.sendMessage(c("&cTum hologramlar silindi."));
+            }
+            case "menu" -> {
+                TrapData td = mgr.at(p.getLocation());
+                if (td==null||!td.isMember(p.getUniqueId())) { p.sendMessage(c("&cBir trapin icinde olmalisin!")); return true; }
+                active.put(p.getUniqueId(),td.getId()); gui.openMenu(p,td);
+            }
+            case "sat" -> {
+                if (args.length<2) { p.sendMessage(c("&c/trap sat <fiyat>")); return true; }
+                double pr; try { pr=Double.parseDouble(args[1]); } catch(NumberFormatException e){ p.sendMessage(c("&cGecersiz fiyat!")); return true; }
+                TrapData td = ownedTrap(p); if (td==null) { p.sendMessage(c("&cSahibi oldugun bir trapin icinde olmalisin!")); return true; }
+                mgr.listMarket(td.getId(),pr);
+                p.sendMessage(c("&aTrap #"+td.getId()+" $"+String.format("%.0f",pr)+" ile satisa cikarildi!"));
+            }
+            case "gericek" -> {
+                TrapData td = ownedTrap(p); if (td==null) { p.sendMessage(c("&cSahibi oldugun bir trapin icinde olmalisin!")); return true; }
+                mgr.unlistMarket(td.getId()); p.sendMessage(c("&aTrap #"+td.getId()+" satistan cekildi."));
+            }
+            case "parayatir" -> {
+                if (args.length<2) { p.sendMessage(c("&c/trap parayatir <miktar>")); return true; }
+                double am; try { am=Double.parseDouble(args[1]); } catch(NumberFormatException e){ p.sendMessage(c("&cGecersiz miktar!")); return true; }
+                TrapData td = mgr.at(p.getLocation());
+                if (td==null||!td.isMember(p.getUniqueId())) { p.sendMessage(c("&cBu trapin uyesi degilsin!")); return true; }
+                if (!eco.take(p,am)) { p.sendMessage(c("&cYetersiz bakiye! Bakiye: "+eco.fmt(eco.bal(p)))); return true; }
+                mgr.deposit(td.getId(),am);
+                p.sendMessage(c("&a$"+String.format("%.2f",am)+" trap bankasina yatirildi. Banka: $"+String.format("%.2f",td.getBank())));
+            }
+            case "paracek" -> {
+                if (args.length<2) { p.sendMessage(c("&c/trap paracek <miktar>")); return true; }
+                double am; try { am=Double.parseDouble(args[1]); } catch(NumberFormatException e){ p.sendMessage(c("&cGecersiz miktar!")); return true; }
+                TrapData td = mgr.at(p.getLocation());
+                if (td==null) { p.sendMessage(c("&cBir trapin icinde degilsin!")); return true; }
+                if (!td.getOwner().equals(p.getUniqueId())) { p.sendMessage(c("&cSadece sahip para cekebilir!")); return true; }
+                if (!mgr.withdraw(td.getId(),am)) { p.sendMessage(c("&cBankada yeterli para yok! Banka: $"+String.format("%.2f",td.getBank()))); return true; }
+                eco.give(p,am);
+                p.sendMessage(c("&a$"+String.format("%.2f",am)+" cekildi. Banka: $"+String.format("%.2f",td.getBank())));
+            }
+            case "davet" -> {
+                if (args.length<2) { p.sendMessage(c("&c/trap davet <oyuncu>")); return true; }
+                TrapData td = ownedTrap(p); if (td==null) { p.sendMessage(c("&cSahibi oldugun bir trapin icinde olmalisin!")); return true; }
+                Player t = Bukkit.getPlayer(args[1]); if (t==null) { p.sendMessage(c("&cOyuncu cevrimici degil!")); return true; }
+                if (mgr.invite(td.getId(),t.getUniqueId())) {
+                    p.sendMessage(c("&a"+t.getName()+" Trap #"+td.getId()+"'e eklendi!"));
+                    t.sendMessage(c("&d"+p.getName()+" sizi &dTrap #"+td.getId()+"&a'ya davet etti!"));
+                } else p.sendMessage(c("&cZaten uye!"));
+            }
+            case "kick" -> {
+                if (args.length<2) { p.sendMessage(c("&c/trap kick <oyuncu>")); return true; }
+                TrapData td = ownedTrap(p); if (td==null) { p.sendMessage(c("&cSahibi oldugun bir trapin icinde olmalisin!")); return true; }
+                UUID tid = null;
+                Player to = Bukkit.getPlayer(args[1]);
+                if (to!=null) { tid=to.getUniqueId(); }
+                else { for(UUID u:td.getMembers()) { String n=Bukkit.getOfflinePlayer(u).getName(); if(args[1].equalsIgnoreCase(n)){tid=u;break;} } }
+                if (tid==null) { p.sendMessage(c("&cOyuncu uye degil!")); return true; }
+                if (mgr.kick(td.getId(),tid)) {
+                    p.sendMessage(c("&c"+args[1]+" Trap #"+td.getId()+"'den atiildi."));
+                    if (to!=null) to.sendMessage(c("&cTrap #"+td.getId()+"'den cikarildiniz."));
+                } else p.sendMessage(c("&cKick basarisiz!"));
+            }
+            case "banka" -> {
+                TrapData td = mgr.at(p.getLocation());
+                if (td==null||!td.isMember(p.getUniqueId())) { p.sendMessage(c("&cBir trapin icinde olmalisin!")); return true; }
+                p.sendMessage(c("&5&m                  "));
+                p.sendMessage(c("  &d&lTrap #"+td.getId()+" Banka"));
+                p.sendMessage(c("  &7Sahip: &f"+td.getOwnerName()));
+                p.sendMessage(c("  &7Banka: &a$"+String.format("%.2f",td.getBank())));
+                p.sendMessage(c("&5&m                  "));
+            }
+            case "bilgi" -> {
+                TrapData td = args.length>=2 ? tryGetById(p,args[1]) : mgr.at(p.getLocation());
+                if (td==null) { p.sendMessage(c("&cTrap bulunamadi!")); return true; }
+                showInfo(p,td);
+            }
+            case "tp" -> {
+                TrapData td;
+                if (args.length>=2) { td=tryGetById(p,args[1]); }
+                else { List<TrapData> mine=mgr.ofPlayer(p.getUniqueId()); td=mine.isEmpty()?null:mine.get(0); }
+                if (td==null) { p.sendMessage(c("&cTrap bulunamadi!")); return true; }
+                Location tl = td.getSpawn()!=null ? td.getSpawn() : td.getPos1().clone().add(0.5,1,0.5);
+                p.teleport(tl);
+                p.sendMessage(c("&aTrap #"+td.getId()+" konumuna isinlandiniz!"));
+            }
+            case "liste" -> {
+                List<TrapData> mine = mgr.ofPlayer(p.getUniqueId());
+                if (mine.isEmpty()) { p.sendMessage(c("&cHic trapiniz yok.")); return true; }
+                p.sendMessage(c("&d&lTraplariniz (&f"+mine.size()+"&d):"));
+                for (TrapData td : mine)
+                    p.sendMessage(c("  &5#"+td.getId()+" &7Boyut: &f"+td.getSize()+" &7Banka: &a$"+String.format("%.0f",td.getBank())+(td.isForSale()?" &c[SATISTA]":"")));
+            }
+            default -> showHelp(p);
         }
         return true;
     }
 
-    // --- 1. ANA MENÜ ---
-    public void openMainGui(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, plugin.color("&#FF0000&lS&#FF1A40&lV&#FF3380&lX &#FF4DBF&lN&#FF66FF&lW &f» Oyuncu Veritabanı"));
-        decorateGui(inv);
-
-        if (deathsConfig.getConfigurationSection("stats") != null) {
-            for (String uuidStr : deathsConfig.getConfigurationSection("stats").getKeys(false)) {
-                OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(uuidStr));
-                ItemStack head = new ItemStack(Material.PLAYER_HEAD);
-                SkullMeta meta = (SkullMeta) head.getItemMeta();
-                meta.setOwningPlayer(op);
-                meta.setDisplayName(plugin.color("&#FF0000" + op.getName() + " &fBilgileri"));
-                
-                meta.setLore(Arrays.asList(
-                    plugin.color("&f&m----------------------------------------------------"),
-                    plugin.color(" "),
-                    plugin.color(" &#FF3380Sistem Durumu: &aAktif Veri Bulundu"),
-                    plugin.color(" &#FF3380Gerçekleşen Ölüm: &f" + deathsConfig.getInt("stats." + uuidStr + ".total") + " Adet"),
-                    plugin.color(" &#FF3380Son Ölüm: &7" + deathsConfig.getString("stats." + uuidStr + ".last")),
-                    plugin.color(" "),
-                    plugin.color(" &#FF0000[SAĞ TIKLA] &fKayıtları Listele"),
-                    plugin.color(" "),
-                    plugin.color("&f&m----------------------------------------------------")
-                ));
-                head.setItemMeta(meta);
-                inv.addItem(head);
-            }
-        }
-        p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 2f);
-        p.openInventory(inv);
+    private TrapData ownedTrap(Player p) {
+        TrapData td = mgr.at(p.getLocation());
+        if (td!=null&&td.getOwner().equals(p.getUniqueId())) return td;
+        Integer aid = active.get(p.getUniqueId());
+        if (aid!=null) { TrapData d=mgr.get(aid); if(d!=null&&d.getOwner().equals(p.getUniqueId())) return d; }
+        return null;
     }
 
-    // --- 2. ÖLÜM KAYITLARI LİSTESİ ---
-    public void openDeathRecords(Player admin, String targetName) {
-        UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
-        Inventory inv = Bukkit.createInventory(null, 54, plugin.color("&#FF0000" + targetName + " &f» &#FF3380Kayıt Arşivi"));
-        decorateGui(inv);
-
-        if (deathsConfig.getConfigurationSection("deaths." + uuid) != null) {
-            List<String> timestamps = new ArrayList<>(deathsConfig.getConfigurationSection("deaths." + uuid).getKeys(false));
-            timestamps.sort(Collections.reverseOrder());
-
-            for (String ts : timestamps) {
-                String path = "deaths." + uuid + "." + ts;
-                ItemStack chest = new ItemStack(Material.CHEST);
-                ItemMeta meta = chest.getItemMeta();
-                meta.setDisplayName(plugin.color("&#FF0000Ölüm Kaydı &f#" + ts.substring(ts.length() - 5)));
-                
-                String cause = deathsConfig.getString(path + ".cause", "Bilinmeyen Sebep");
-                String killer = deathsConfig.getString(path + ".killer", "Yok / Doğa");
-                int level = deathsConfig.getInt(path + ".level", 0);
-                int food = deathsConfig.getInt(path + ".food", 20);
-
-                meta.setLore(Arrays.asList(
-                    plugin.color("&f&m----------------------------------------------------"),
-                    plugin.color(" "),
-                    plugin.color(" &#FF3380Tarih: &f" + deathsConfig.getString(path + ".date")),
-                    plugin.color(" &#FF3380Sebep: &7" + cause),
-                    plugin.color(" &#FF3380Katil: &c" + killer),
-                    plugin.color(" &#FF3380Bölge: &f" + deathsConfig.getString(path + ".world") + " &8(&f" + deathsConfig.getString(path + ".coords") + "&8)"),
-                    plugin.color(" &#FF3380Kayıtlı XP / Açlık: &a" + level + " Lvl &8- &6" + food + " But"),
-                    plugin.color(" "),
-                    plugin.color(" &#FF3380Durum: &fİadeye Hazır &8(ID: " + ts + ")"),
-                    plugin.color(" "),
-                    plugin.color(" &#FF0000[SOL TIK] &fEşyaları Hemen Geri Ver"),
-                    plugin.color(" &#FF0000[SAĞ TIK] &fİçeriğe Göz At"),
-                    plugin.color(" "),
-                    plugin.color("&f&m----------------------------------------------------")
-                ));
-                chest.setItemMeta(meta);
-                inv.addItem(chest);
-            }
-        }
-        addSymmetricControls(inv, targetName);
-        admin.playSound(admin.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-        admin.openInventory(inv);
+    private TrapData tryGetById(Player p, String s) {
+        try { return mgr.get(Integer.parseInt(s)); } catch(NumberFormatException e) { p.sendMessage(c("&cGecersiz ID!")); return null; }
     }
 
-    // --- 3. İÇERİK ÖNİZLEME ---
-    public void openPreview(Player admin, String targetName, String ts) {
-        Inventory inv = Bukkit.createInventory(null, 54, plugin.color("&#FF0000" + targetName + " &f» &#FF3380Eşyalar"));
-        String path = "deaths." + Bukkit.getOfflinePlayer(targetName).getUniqueId() + "." + ts + ".items";
-        
-        if (deathsConfig.getConfigurationSection(path) != null) {
-            for (String slotStr : deathsConfig.getConfigurationSection(path).getKeys(false)) {
-                try {
-                    int slot = Integer.parseInt(slotStr);
-                    ItemStack item = deathsConfig.getItemStack(path + "." + slotStr);
-                    if (item != null && slot < 45) inv.setItem(slot, item);
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-
-        ItemStack back = new ItemStack(Material.ARROW);
-        ItemMeta m = back.getItemMeta();
-        m.setDisplayName(plugin.color("&#FF0000⬅ Geri Dön"));
-        back.setItemMeta(m);
-        inv.setItem(49, back); 
-        admin.playSound(admin.getLocation(), Sound.ITEM_BOOK_PAGE_TURN, 1f, 1f);
-        admin.openInventory(inv);
+    private void showInfo(Player p, TrapData td) {
+        p.sendMessage(c("&5&m                        "));
+        p.sendMessage(c("  &d&lTRAP &5#"+td.getId()));
+        p.sendMessage(c("  &7Sahip: &f"+td.getOwnerName()));
+        p.sendMessage(c("  &7Banka: &a$"+String.format("%.2f",td.getBank())));
+        p.sendMessage(c("  &7Uye: &f"+td.getMemberCount()));
+        p.sendMessage(c("  &7Boyut: &f"+td.getSize()));
+        p.sendMessage(c("  &7Satilik: "+(td.isForSale()?"&aEvet &7($"+String.format("%.0f",td.getSalePrice())+")":"&cHayir")));
+        p.sendMessage(c("&5&m                        "));
     }
 
-    @EventHandler
-    public void onDeath(PlayerDeathEvent e) {
-        Player p = e.getEntity();
-        UUID uuid = p.getUniqueId();
-
-        // Çift Ölüm Kaydını Engelleme (2 Saniye Koruması)
-        if (deathCooldown.containsKey(uuid) && System.currentTimeMillis() - deathCooldown.get(uuid) < 2000) return;
-        deathCooldown.put(uuid, System.currentTimeMillis());
-
-        String ts = String.valueOf(System.currentTimeMillis());
-        String path = "deaths." + uuid + "." + ts;
-        
-        deathsConfig.set(path + ".date", new SimpleDateFormat("dd/MM/yyyy HH:mm:ss").format(new Date()));
-        deathsConfig.set(path + ".world", p.getWorld().getName());
-        deathsConfig.set(path + ".coords", p.getLocation().getBlockX() + "X " + p.getLocation().getBlockY() + "Y " + p.getLocation().getBlockZ() + "Z");
-        deathsConfig.set(path + ".location", p.getLocation());
-        
-        deathsConfig.set(path + ".cause", e.getDeathMessage() != null ? e.getDeathMessage() : "Bilinmiyor");
-        deathsConfig.set(path + ".killer", p.getKiller() != null ? p.getKiller().getName() : "Yok");
-        deathsConfig.set(path + ".level", p.getLevel());
-        deathsConfig.set(path + ".food", p.getFoodLevel());
-        
-        ItemStack[] contents = p.getInventory().getContents();
-        for (int i = 0; i < contents.length; i++) {
-            if (contents[i] != null && contents[i].getType() != Material.AIR) {
-                deathsConfig.set(path + ".items." + i, contents[i]);
-            }
+    private void showHelp(Player p) {
+        p.sendMessage(c("&5&m                        "));
+        p.sendMessage(c("  &d&lTRAP KOMUTLARI"));
+        p.sendMessage(c("  &5/trap &7- Market"));
+        p.sendMessage(c("  &5/trap menu &7- Trap menusu"));
+        p.sendMessage(c("  &5/trap sat &6<fiyat>"));
+        p.sendMessage(c("  &5/trap gericek"));
+        p.sendMessage(c("  &5/trap parayatir &6<miktar>"));
+        p.sendMessage(c("  &5/trap paracek &6<miktar>"));
+        p.sendMessage(c("  &5/trap davet &6<oyuncu>"));
+        p.sendMessage(c("  &5/trap kick &6<oyuncu>"));
+        p.sendMessage(c("  &5/trap banka"));
+        p.sendMessage(c("  &5/trap bilgi &7[id]"));
+        p.sendMessage(c("  &5/trap tp &7[id]"));
+        p.sendMessage(c("  &5/trap liste"));
+        if (p.hasPermission("loginx.trap.admin")) {
+            p.sendMessage(c("  &c/trap yap &7[fiyat] &8(Yetkili - once balta ile sec)"));
+            p.sendMessage(c("  &c/trap sil &6<id> &8(Yetkili)"));
+            p.sendMessage(c("  &c/trap hologram &8(Yetkili)"));
+            p.sendMessage(c("  &c/trap hologramsil &8(Yetkili)"));
         }
-        
-        deathsConfig.set("stats." + uuid + ".total", deathsConfig.getInt("stats." + uuid + ".total", 0) + 1);
-        deathsConfig.set("stats." + uuid + ".last", new SimpleDateFormat("dd/MM/yyyy HH:mm").format(new Date()));
-        deathsConfig.set("stats." + uuid + ".last_loc", p.getLocation());
-        saveDeaths();
+        p.sendMessage(c("&5&m                        "));
     }
 
-    @EventHandler
-    public void onGuiClick(InventoryClickEvent e) {
-        String title = ChatColor.stripColor(e.getView().getTitle());
-        if (title.contains("SVX NW") || title.contains("Kayıt Arşivi") || title.contains("Eşyalar")) {
-            e.setCancelled(true);
-            
-            // Çift Tıklamayı ve Alt Envanteri Engelleme
-            if (e.getClickedInventory() == null || e.getClickedInventory() != e.getView().getTopInventory()) return;
-            if (e.getCurrentItem() == null || e.getCurrentItem().getType() == Material.AIR) return;
-            
-            Player admin = (Player) e.getWhoClicked();
-            UUID uuid = admin.getUniqueId();
-
-            // Tıklama Koruması (Yarım saniyede 1 tık)
-            if (clickCooldown.containsKey(uuid) && System.currentTimeMillis() - clickCooldown.get(uuid) < 500) return;
-            clickCooldown.put(uuid, System.currentTimeMillis());
-
-            String targetName = title.split(" ")[0]; 
-
-            if (e.getCurrentItem().getType() == Material.PLAYER_HEAD) {
-                String headName = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName()).replace(" Bilgileri", "");
-                openDeathRecords(admin, headName);
-            } 
-            else if (e.getCurrentItem().getType() == Material.CHEST && title.contains("Kayıt Arşivi")) {
-                String idLine = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getLore().get(8)); // Lore satırı indexi (8)
-                String ts = idLine.substring(idLine.indexOf("ID: ") + 4, idLine.length() - 1);
-                
-                if (e.isLeftClick()) handleRestore(admin, targetName, ts);
-                else openPreview(admin, targetName, ts);
-            } 
-            else if (e.getSlot() == 48 && title.contains("Kayıt Arşivi")) { 
-                handleTeleport(admin, targetName);
-            }
-            else if (e.getSlot() == 50 && e.getCurrentItem().getType() == Material.BARRIER && title.contains("Kayıt Arşivi")) {
-                deathsConfig.set("deaths." + Bukkit.getOfflinePlayer(targetName).getUniqueId(), null);
-                saveDeaths();
-                admin.playSound(admin.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1f);
-                admin.sendMessage(plugin.color("&#FF0000[SVX NW] &fOyuncuya ait tüm ölüm arşivi temizlendi."));
-                admin.closeInventory();
-            }
-            else if (e.getSlot() == 49 && e.getCurrentItem().getType() == Material.ARROW) {
-                openDeathRecords(admin, targetName);
-            }
-        }
-    }
-
-    private void handleRestore(Player admin, String targetName, String ts) {
-        Player target = Bukkit.getPlayer(targetName);
-        if (target == null) { 
-            admin.sendMessage(plugin.color("&#FF0000[SVX NW] &fOyuncu şu anda sunucuda aktif değil!")); 
-            return; 
-        }
-        
-        String path = "deaths." + target.getUniqueId() + "." + ts;
-        String itemsPath = path + ".items";
-        
-        if (deathsConfig.getConfigurationSection(itemsPath) != null) {
-            for (String slotStr : deathsConfig.getConfigurationSection(itemsPath).getKeys(false)) {
-                int slot = Integer.parseInt(slotStr);
-                ItemStack item = deathsConfig.getItemStack(itemsPath + "." + slotStr);
-                
-                if (item != null) {
-                    ItemStack currentInSlot = target.getInventory().getItem(slot);
-                    if (currentInSlot == null || currentInSlot.getType() == Material.AIR) {
-                        target.getInventory().setItem(slot, item);
-                    } else {
-                        HashMap<Integer, ItemStack> leftOvers = target.getInventory().addItem(item);
-                        if (!leftOvers.isEmpty()) {
-                            target.getWorld().dropItemNaturally(target.getLocation(), leftOvers.get(0));
-                        }
+    private String c(String t) { return ChatColor.translateAlternateColorCodes('&',t); }
                     }
-                }
-            }
-            
-            int savedLevel = deathsConfig.getInt(path + ".level", 0);
-            if (savedLevel > 0) target.setLevel(target.getLevel() + savedLevel);
-            
-            // --- YENİ GÖRSEL VE YAZILI EFEKTLER ---
-            // 1. Oyuncunun kafasındaki HEART partikülü
-            target.spawnParticle(Particle.HEART, target.getLocation().add(0, 1.5, 0), 20);
-            
-            // 2. Oyuncunun EKRANINA Kalp çıkması (Title)
-            target.sendTitle(plugin.color("&#FF0000&l♥"), "", 10, 40, 10);
-            
-            // 3. EKRANDAKİ Kalbin altında SUBTITLE olarak adminin ismi (Açık Mavi RGB Karışık)
-            new BukkitRunnable() {
-                @Override public void run() {
-                    target.sendTitle(plugin.color("&#FF0000&l♥"), plugin.color("&#33CCFF&lİade Yapan: &#66E0FF&l" + admin.getName()), 0, 40, 10);
-                    target.playSound(target.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
-                }
-            }.runTaskLater(plugin, 5L); // 5 tick sonra subtitle'ı gönder (Title ile çakışmasın)
-
-            deathsConfig.set(path, null);
-            saveDeaths();
-            
-            // 4. Adminin ekranına (ACTIONBAR) Açık Mavi bildirim
-            admin.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(plugin.color("&#33CCFFİade başarıyla oyuncuya gönderildi!")));
-            admin.closeInventory();
-        }
-    }
-
-    private void handleTeleport(Player admin, String targetName) {
-        OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
-        Location loc = deathsConfig.getLocation("stats." + op.getUniqueId() + ".last_loc");
-        
-        if (loc != null) {
-            admin.teleport(loc);
-            admin.playSound(admin.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
-            admin.spawnParticle(Particle.PORTAL, admin.getLocation(), 100, 0.5, 1, 0.5);
-            admin.sendMessage(plugin.color("&#FF0000[SVX NW] &fOyuncunun son ölüm konumuna ışınlandınız!"));
-        } else {
-            admin.sendMessage(plugin.color("&#FF0000[SVX NW] &fKayıtlı bir konum bulunamadı!"));
-        }
-    }
-
-    private void addSymmetricControls(Inventory inv, String target) {
-        ItemStack tp = new ItemStack(Material.ENDER_CHEST);
-        ItemMeta m1 = tp.getItemMeta();
-        m1.setDisplayName(plugin.color("&#FF0000Son Konuma Işınlan"));
-        m1.setLore(Arrays.asList(
-            plugin.color("&fOyuncunun ölmeden hemen önceki"),
-            plugin.color("&fkoordinatlarına ışınlanın."),
-            plugin.color(" "),
-            plugin.color("&#FF3380[TIKLA VE IŞINLAN]")
-        ));
-        tp.setItemMeta(m1);
-        inv.setItem(48, tp);
-
-        ItemStack info = new ItemStack(Material.WRITTEN_BOOK);
-        ItemMeta m2 = info.getItemMeta();
-        m2.setDisplayName(plugin.color("&#FF3380Gelişmiş İade Sistemi V5"));
-        m2.setLore(Arrays.asList(
-            plugin.color("&fKatil bilgisi, açlık barı, XP"),
-            plugin.color("&fve nokta atışı iade aktiftir."),
-            plugin.color("&fV5: Ekran Title Efektleri!")
-        ));
-        info.setItemMeta(m2);
-        inv.setItem(49, info);
-
-        ItemStack clear = new ItemStack(Material.BARRIER);
-        ItemMeta m3 = clear.getItemMeta();
-        m3.setDisplayName(plugin.color("&#FF0000Tüm Kayıtları Temizle"));
-        m3.setLore(Arrays.asList(
-            plugin.color("&fBu oyuncuya ait veritabanındaki"),
-            plugin.color("&ftüm geçmiş ölümleri kalıcı olarak"),
-            plugin.color("&fsilmek için tıklayın."),
-            plugin.color(" "),
-            plugin.color("&#FF3380[DİKKAT! GERİ ALINAMAZ]")
-        ));
-        clear.setItemMeta(m3);
-        inv.setItem(50, clear);
-    }
-
-    private void decorateGui(Inventory inv) {
-        ItemStack redPane = new ItemStack(Material.RED_STAINED_GLASS_PANE);
-        ItemStack pinkPane = new ItemStack(Material.PINK_STAINED_GLASS_PANE);
-        ItemStack whitePane = new ItemStack(Material.WHITE_STAINED_GLASS_PANE); 
-        
-        ItemMeta rm = redPane.getItemMeta(); rm.setDisplayName(" "); redPane.setItemMeta(rm);
-        ItemMeta pm = pinkPane.getItemMeta(); pm.setDisplayName(" "); pinkPane.setItemMeta(pm);
-        ItemMeta wm = whitePane.getItemMeta(); wm.setDisplayName(" "); whitePane.setItemMeta(wm);
-        
-        // Daha simetrik ve RGB uyumlu cam dizilimi
-        int[] redBorder = {0, 4, 8, 45, 49, 53}; 
-        int[] whiteBorder = {1, 3, 5, 7, 46, 48, 50, 52};
-        int[] pinkBorder = {2, 6, 47, 51}; 
-        
-        for (int i : redBorder) inv.setItem(i, redPane);
-        for (int i : whiteBorder) inv.setItem(i, whitePane);
-        for (int i : pinkBorder) inv.setItem(i, pinkPane);
-    }
-
-    private void startScoreboardTask() {
-        new BukkitRunnable() {
-            @Override public void run() {
-                for (Player p : Bukkit.getOnlinePlayers()) updateScoreboard(p);
-            }
-        }.runTaskTimer(plugin, 0L, 20L);
-    }
-
-    private void updateScoreboard(Player p) {
-        Scoreboard b = Bukkit.getScoreboardManager().getNewScoreboard();
-        Objective o = b.registerNewObjective("svx", "dummy", plugin.color("&#FF0000&lS&#FF1A40&lV&#FF3380&lX"));
-        o.setDisplaySlot(DisplaySlot.SIDEBAR);
-        o.getScore(plugin.color("&#FF3380Ping: &f" + p.getPing() + "ms")).setScore(1);
-        p.setScoreboard(b);
-    }
-
-    private void saveDeaths() {
-        try { deathsConfig.save(deathsFile); } catch (IOException e) { e.printStackTrace(); }
-    }
-                            }
-                    
