@@ -69,8 +69,8 @@ public class LoginX extends JavaPlugin implements Listener {
         trapListener = new TrapX3(trapX, trapGUI, eco, this);
         trapCmd      = new TrapX2(trapX, trapGUI, eco, trapListener);
 
-        // TrapX3'e TrapX2 referansini ver (GUI icin)
-        trapListener = new TrapX3(trapX, trapGUI, eco, trapCmd, this);
+        // GUI için TrapX3'e TrapX2 referansını veriyoruz (İki kere başlatma hatası düzeltildi)
+        trapListener.setCmd(trapCmd);
 
         PluginCommand tc = getCommand("trap");
         if (tc != null) tc.setExecutor(trapCmd);
