@@ -292,5 +292,5 @@ public class TrapX2 implements CommandExecutor {
     }
 
     private String c(String t) { return ChatColor.translateAlternateColorCodes('&',t); }
-                  }
-            
+    }
+                                             
