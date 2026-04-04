@@ -18,7 +18,7 @@ public class TrapX3 implements Listener {
     private final TrapX mgr;
     private final TrapGUI gui;
     private final EconomyBridge eco;
-    private final TrapX2 cmd;
+    private TrapX2 cmd; // final kaldirildi, setter eklendi
     private final Plugin plugin;
 
     private final Map<UUID,Integer> pending = new HashMap<>();
@@ -27,13 +27,12 @@ public class TrapX3 implements Listener {
     private int step = 0;
 
     public TrapX3(TrapX mgr, TrapGUI gui, EconomyBridge eco, Plugin plugin) {
-        this.mgr=mgr; this.gui=gui; this.eco=eco; this.plugin=plugin; this.cmd=null;
+        this.mgr=mgr; this.gui=gui; this.eco=eco; this.plugin=plugin;
         startAnim();
     }
 
-    public TrapX3(TrapX mgr, TrapGUI gui, EconomyBridge eco, TrapX2 cmd, Plugin plugin) {
-        this.mgr=mgr; this.gui=gui; this.eco=eco; this.cmd=cmd; this.plugin=plugin;
-        startAnim();
+    public void setCmd(TrapX2 cmd) {
+        this.cmd = cmd;
     }
 
     private void startAnim() {
@@ -250,4 +249,5 @@ public class TrapX3 implements Listener {
     }
 
     private String c(String t) { return ChatColor.translateAlternateColorCodes('&',t); }
-          }
+    }
+                    
