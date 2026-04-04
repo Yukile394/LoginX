@@ -206,4 +206,3 @@ public class TrapX {
 
     public void saveAll() { for (TrapData d : traps.values()) save(d); }
               }
-
