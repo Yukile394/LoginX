@@ -9,33 +9,40 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
-import java.util.regex.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class LoginX extends JavaPlugin implements Listener {
-
-    private SwordManager swordManager; // 🔥 EKLENDİ
 
     private final HashMap<UUID, Integer> kills = new HashMap<>();
     private final HashMap<UUID, Integer> playtime = new HashMap<>();
     private final HashMap<UUID, Integer> blocksBroken = new HashMap<>();
+
     private final HashMap<Location, String> activeHolograms = new HashMap<>();
     private final List<ArmorStand> spawnedStands = new ArrayList<>();
+
     private long nextResetTime;
+
+    // Sword system
+    public SwordManager swordManager;
 
     @Override
     public void onEnable() {
-
         Bukkit.getPluginManager().registerEvents(this, this);
-
-        // 🔥 SWORD SYSTEM BAĞLANTISI (EN ÖNEMLİ KISIM)
-        swordManager = new SwordManager(this);
 
         saveDefaultConfig();
         loadStats();
+
+        // ✔ SWORD SYSTEM BAĞLANTI
+        swordManager = new SwordManager(this);
+        getServer().getPluginManager().registerEvents(swordManager, this);
 
         startPlaytime();
         startHoloUpdater();
@@ -51,8 +58,9 @@ public class LoginX extends JavaPlugin implements Listener {
         getLogger().info("LoginX kapandi.");
     }
 
-    // ================= COMMAND =================
-
+    // ─────────────────────────────
+    // COMMANDS
+    // ─────────────────────────────
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 
@@ -61,72 +69,48 @@ public class LoginX extends JavaPlugin implements Listener {
             return true;
         }
 
-        String c = cmd.getName().toLowerCase();
-
-        // ================= SKORLAR =================
-        if (c.equals("skorkill")) {
-            spawnHolo(p.getLocation(), "KILLS");
+        if (!p.hasPermission("loginx.admin")) {
+            p.sendMessage(color("&cYetkin yok!"));
             return true;
         }
 
-        if (c.equals("skorzaman")) {
-            spawnHolo(p.getLocation(), "PLAYTIME");
+        String cn = cmd.getName().toLowerCase();
+
+        Location tl = p.getTargetBlock(null, 10).getLocation().add(0.5, 3, 0.5);
+
+        if (cn.equals("skorkill")) {
+            spawnHolo(tl, "KILLS");
             return true;
         }
 
-        if (c.equals("skorblok")) {
-            spawnHolo(p.getLocation(), "BLOCKS");
+        if (cn.equals("skorzaman")) {
+            spawnHolo(tl, "PLAYTIME");
             return true;
         }
 
-        if (c.equals("skorsil")) {
+        if (cn.equals("skorblok")) {
+            spawnHolo(tl, "BLOCKS");
+            return true;
+        }
+
+        if (cn.equals("skorsil")) {
             clearHolos();
             activeHolograms.clear();
             return true;
         }
 
-        // ================= KILIÇ MENU FIX =================
-        if (c.equals("kilicvermenu")) {
+        // ✔ SWORD MENU COMMAND
+        if (cn.equals("swordmenu")) {
             openSwordMenu(p);
-            return true;
-        }
-
-        // ================= TEST / DIRECT GIVE =================
-        if (c.equals("shulkerkilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makeShulkerSword());
-            return true;
-        }
-
-        if (c.equals("endermankilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makeEndermanSword());
-            return true;
-        }
-
-        if (c.equals("orumcekkilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makeSpiderSword());
-            return true;
-        }
-
-        if (c.equals("phantomkilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makePhantomSword());
-            return true;
-        }
-
-        if (c.equals("golemkilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makeGolemSword());
-            return true;
-        }
-
-        if (c.equals("creeperkilicver")) {
-            swordManager.giveToPlayer(p, swordManager.makeCreeperSword());
             return true;
         }
 
         return true;
     }
 
-    // ================= SIMPLE GUI =================
-
+    // ─────────────────────────────
+    // GUI
+    // ─────────────────────────────
     private void openSwordMenu(Player p) {
         Inventory inv = Bukkit.createInventory(null, 27, "§8Kılıç Menüsü");
 
@@ -138,8 +122,9 @@ public class LoginX extends JavaPlugin implements Listener {
         p.openInventory(inv);
     }
 
-    // ================= EVENTS =================
-
+    // ─────────────────────────────
+    // EVENTS
+    // ─────────────────────────────
     @EventHandler
     public void onKill(PlayerDeathEvent e) {
         Player k = e.getEntity().getKiller();
@@ -151,7 +136,77 @@ public class LoginX extends JavaPlugin implements Listener {
         blocksBroken.merge(e.getPlayer().getUniqueId(), 1, Integer::sum);
     }
 
-    // ================= PLAYTIME =================
+    // ─────────────────────────────
+    // HOLOGRAM SYSTEM
+    // ─────────────────────────────
+
+    private void startHoloUpdater() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (activeHolograms.isEmpty()) return;
+                clearHolos();
+                activeHolograms.forEach(LoginX.this::buildHolo);
+            }
+        }.runTaskTimer(this, 100L, 100L);
+    }
+
+    private void spawnHolo(Location loc, String type) {
+        activeHolograms.put(loc, type);
+        buildHolo(loc, type);
+    }
+
+    private void buildHolo(Location base, String type) {
+
+        List<String> lines = new ArrayList<>();
+
+        if (type.equals("KILLS")) {
+            lines.add("§cEN ÇOK KILL");
+            lines.add("Veri...");
+        } else if (type.equals("PLAYTIME")) {
+            lines.add("§bEN ÇOK OYNAYAN");
+            lines.add("Veri...");
+        } else {
+            lines.add("§aEN ÇOK BLOK");
+            lines.add("Veri...");
+        }
+
+        double y = 0;
+
+        for (String line : lines) {
+            ArmorStand s = (ArmorStand) base.getWorld().spawnEntity(
+                    base.clone().subtract(0, y, 0),
+                    EntityType.ARMOR_STAND
+            );
+
+            s.setVisible(false);
+            s.setCustomNameVisible(true);
+            s.setCustomName(color(line));
+            s.setGravity(false);
+            s.setMarker(true);
+
+            spawnedStands.add(s);
+            y += 0.3;
+        }
+    }
+
+    private void clearHolos() {
+        for (ArmorStand s : spawnedStands) {
+            if (s != null && !s.isDead()) s.remove();
+        }
+        spawnedStands.clear();
+    }
+
+    // ─────────────────────────────
+    // COLOR FIX
+    // ─────────────────────────────
+    public String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text);
+    }
+
+    // ─────────────────────────────
+    // STATS
+    // ─────────────────────────────
 
     private void startPlaytime() {
         new BukkitRunnable() {
@@ -164,21 +219,6 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskTimer(this, 1200L, 1200L);
     }
 
-    // ================= HOLOGRAM =================
-
-    private void spawnHolo(Location loc, String type) {
-        activeHolograms.put(loc, type);
-    }
-
-    private void clearHolos() {
-        for (ArmorStand a : spawnedStands) {
-            if (a != null && !a.isDead()) a.remove();
-        }
-        spawnedStands.clear();
-    }
-
-    // ================= WEEK RESET =================
-
     private void startWeeklyReset() {
         new BukkitRunnable() {
             @Override
@@ -187,22 +227,22 @@ public class LoginX extends JavaPlugin implements Listener {
                     kills.clear();
                     playtime.clear();
                     blocksBroken.clear();
+
                     nextResetTime = System.currentTimeMillis() + 604800000L;
+                    Bukkit.broadcastMessage("§aHaftalık sıfırlama!");
                 }
             }
         }.runTaskTimer(this, 20L * 60, 20L * 60 * 60);
     }
 
-    // ================= SAVE =================
+    private void loadStats() {
+        FileConfiguration c = getConfig();
+        nextResetTime = c.getLong("reset", System.currentTimeMillis() + 604800000L);
+    }
 
     private void saveStats() {
         FileConfiguration c = getConfig();
-        c.set("next_reset", nextResetTime);
+        c.set("reset", nextResetTime);
         saveConfig();
     }
-
-    private void loadStats() {
-        FileConfiguration c = getConfig();
-        nextResetTime = c.getLong("next_reset", System.currentTimeMillis() + 604800000L);
     }
-                                   }
