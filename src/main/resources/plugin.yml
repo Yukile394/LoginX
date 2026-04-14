@@ -6,11 +6,16 @@ softdepend:
   - Vault
 
 commands:
+
   register:
     description: Kayıt olma komutu
 
   login:
     description: Giriş yapma komutu
+
+  # ───────────────────────
+  # SCORE HOLOGRAM
+  # ───────────────────────
 
   skorkill:
     description: En çok öldürenler tablosu
@@ -27,6 +32,10 @@ commands:
   skorsil:
     description: Skor hologramlarını temizler
     permission: loginx.admin
+
+  # ───────────────────────
+  # TRAP SYSTEM
+  # ───────────────────────
 
   trap:
     description: Trap ana komutu
@@ -47,12 +56,22 @@ commands:
     description: Trap hologramı koyar
     permission: loginx.admin
 
-  # Menü Komutu
+  # ───────────────────────
+  # MENÜ
+  # ───────────────────────
+
   kilicvermenu:
     description: Kılıç verme menüsünü açar
     permission: loginx.admin
 
-  # Özel Kılıç Komutları
+  swordmenu:
+    description: Kılıç menüsünü açar
+    permission: loginx.admin
+
+  # ───────────────────────
+  # ÖZEL KILIÇLAR
+  # ───────────────────────
+
   shulkerkilicver:
     description: Shulker Kılıcı verir (Levitation 3s, CD 30s)
     usage: /shulkerkilicver [oyuncu]
@@ -84,6 +103,7 @@ commands:
     permission: loginx.admin
 
 permissions:
+
   loginx.admin:
     description: Admin yetkisi
     default: op
