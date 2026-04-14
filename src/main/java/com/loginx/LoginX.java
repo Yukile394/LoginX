@@ -87,7 +87,6 @@ public class LoginX extends JavaPlugin implements Listener {
         return true;
     }
 
-    // Ekstra kılıç verme komutları (plugin.yml gerektirmemesi için event üzerinden yapıldı)
     @EventHandler
     public void onFastCommand(PlayerCommandPreprocessEvent e) {
         Player p = e.getPlayer();
@@ -107,7 +106,7 @@ public class LoginX extends JavaPlugin implements Listener {
             e.setCancelled(true);
             p.getInventory().addItem(getSpecialSword(swordType));
             p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 2f);
-            p.spawnParticle(Particle.TOTEM, p.getLocation(), 30, 0.5, 1, 0.5, 0.1);
+            p.spawnParticle(Particle.TOTEM_OF_UNDYING, p.getLocation(), 30, 0.5, 1, 0.5, 0.1);
             p.sendMessage(color("&a" + swordType.toUpperCase() + " Kılıcı verildi!"));
         }
     }
@@ -233,7 +232,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 p.playSound(p.getLocation(), Sound.ENTITY_SHULKER_SHOOT, 1f, 1f);
                 for (Player t : nearby) {
                     t.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 3 * 20, 0));
-                    t.spawnParticle(Particle.SPELL_WITCH, t.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, 0.1);
+                    t.spawnParticle(Particle.WITCH, t.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, 0.1);
                 }
                 break;
                 
@@ -245,7 +244,6 @@ public class LoginX extends JavaPlugin implements Listener {
                     Location targetLoc = t.getLocation().add(dir);
                     Block b = targetLoc.getBlock();
                     
-                    // Duvar içi glitch engellemesi (Sadece hava veya örümcek ağına izin ver)
                     if (b.getType().isAir() || b.getType() == Material.COBWEB || !b.getType().isSolid()) {
                         t.teleport(targetLoc);
                         t.spawnParticle(Particle.PORTAL, t.getLocation(), 30, 0.5, 1, 0.5, 0.1);
@@ -260,9 +258,8 @@ public class LoginX extends JavaPlugin implements Listener {
                     Location loc = t.getLocation().add(0, 1, 0);
                     if (loc.getBlock().getType().isAir()) {
                         loc.getBlock().setType(Material.COBWEB);
-                        t.spawnParticle(Particle.BLOCK_CRACK, loc, 20, 0.5, 0.5, 0.5, Material.COBWEB.createBlockData());
+                        t.spawnParticle(Particle.BLOCK, loc, 20, 0.5, 0.5, 0.5, Material.COBWEB.createBlockData());
                         
-                        // 3.5 saniye sonra sil (Duvara zarar vermez)
                         new BukkitRunnable() {
                             @Override
                             public void run() {
@@ -270,7 +267,7 @@ public class LoginX extends JavaPlugin implements Listener {
                                     loc.getBlock().setType(Material.AIR);
                                 }
                             }
-                        }.runTaskLater(this, 70L); // 3.5 saniye * 20 tick
+                        }.runTaskLater(this, 70L);
                     }
                 }
                 break;
@@ -282,9 +279,9 @@ public class LoginX extends JavaPlugin implements Listener {
                 int count = 0;
                 for (Player t : nearby) {
                     if (count >= 2) break;
-                    elytraBanned.put(t.getUniqueId(), System.currentTimeMillis() + 3000L); // 3 Saniye
+                    elytraBanned.put(t.getUniqueId(), System.currentTimeMillis() + 3000L);
                     t.sendMessage(color("&c&lElitra 3 saniyeliğine bozuldu!"));
-                    t.spawnParticle(Particle.SMOKE_LARGE, t.getLocation(), 40, 0.5, 1, 0.5, 0.1);
+                    t.spawnParticle(Particle.LARGE_SMOKE, t.getLocation(), 40, 0.5, 1, 0.5, 0.1);
                     if (t.isGliding()) t.setGliding(false);
                     count++;
                 }
@@ -294,16 +291,16 @@ public class LoginX extends JavaPlugin implements Listener {
                 p.sendMessage(color(hexColor + "Golem Kılıç Özelliğini Kullandın, Ez Geç Onları ;)"));
                 p.playSound(p.getLocation(), Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.5f);
                 for (Player t : nearby) {
-                    t.addPotionEffect(new PotionEffect(PotionEffectType.DAMAGE_RESISTANCE, 3 * 20, 0));
-                    t.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, (int)(1.8 * 20), 3));
-                    t.spawnParticle(Particle.BLOCK_CRACK, t.getLocation(), 30, 0.5, 0.1, 0.5, Material.IRON_BLOCK.createBlockData());
+                    t.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, 3 * 20, 0));
+                    t.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, (int)(1.8 * 20), 3));
+                    t.spawnParticle(Particle.BLOCK, t.getLocation(), 30, 0.5, 0.1, 0.5, Material.IRON_BLOCK.createBlockData());
                 }
                 break;
 
             case "creeper":
                 p.sendMessage(color(hexColor + "Creeper Kılıç Özelliğini Kullandın, Patlat Onları ;)"));
                 p.playSound(p.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
-                p.spawnParticle(Particle.EXPLOSION_HUGE, p.getLocation(), 2);
+                p.spawnParticle(Particle.EXPLOSION_EMITTER, p.getLocation(), 2);
                 for (Player t : nearby) {
                     t.damage(8.0, p);
                     Vector kb = t.getLocation().toVector().subtract(p.getLocation().toVector()).normalize().multiply(1.5).setY(0.6);
@@ -313,7 +310,6 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // Phantom Kılıcı İçin Elitra Kullanım İptali
     @EventHandler
     public void onGlide(EntityToggleGlideEvent e) {
         if (e.getEntity() instanceof Player p && e.isGliding()) {
@@ -452,5 +448,4 @@ public class LoginX extends JavaPlugin implements Listener {
         m.appendTail(sb);
         return ChatColor.translateAlternateColorCodes('&', sb.toString());
     }
-                            }
-        
+                                                                                       }
