@@ -2,25 +2,50 @@ package com.loginx;
 
 import org.bukkit.*;
 import org.bukkit.command.*;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
-import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.util.Vector;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class LoginX extends JavaPlugin implements Listener {
 
-    private final Map<UUID, Map<String, Long>> cooldowns = new HashMap<>();
+    private final HashMap<UUID, Integer> kills = new HashMap<>();
+    private final HashMap<UUID, Integer> playtime = new HashMap<>();
+    private final HashMap<UUID, Integer> blocksBroken = new HashMap<>();
+
+    private final HashMap<Location, String> activeHolograms = new HashMap<>();
+    private final List<ArmorStand> spawnedStands = new ArrayList<>();
+
+    private long nextResetTime;
 
     @Override
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("LoginX Aktif");
+
+        saveDefaultConfig();
+        loadStats();
+
+        startPlaytime();
+        startHoloUpdater();
+        startWeeklyReset();
+
+        getLogger().info("LoginX aktif!");
+    }
+
+    @Override
+    public void onDisable() {
+        saveStats();
+        clearHolos();
     }
 
     // ===================== COMMAND =====================
@@ -28,25 +53,25 @@ public class LoginX extends JavaPlugin implements Listener {
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 
         if (!(sender instanceof Player p)) return true;
-
         if (!p.hasPermission("loginx.admin")) return true;
+
+        Location tl = p.getTargetBlock(null, 10).getLocation().add(0.5, 2.5, 0.5);
 
         switch (cmd.getName().toLowerCase()) {
 
+            case "skorkill" -> spawnHolo(tl, "KILLS");
+            case "skorzaman" -> spawnHolo(tl, "PLAYTIME");
+            case "skorblok" -> spawnHolo(tl, "BLOCKS");
+
+            case "skorsil" -> {
+                clearHolos();
+                activeHolograms.clear();
+                p.sendMessage(color("&cSilindi"));
+            }
+
             case "kilicvermenu" -> openMenu(p);
-
-            case "shulkerkilicver" -> give(p, createSword("§5Shulker Kılıcı"), "shulker");
-
-            case "endermankilicver" -> give(p, createSword("§1Enderman Kılıcı"), "enderman");
-
-            case "orumcekkilicver" -> give(p, createSword("§2Örümcek Kılıcı"), "spider");
-
-            case "phantomkilicver" -> give(p, createSword("§3Phantom Kılıcı"), "phantom");
-
-            case "golemkilicver" -> give(p, createSword("§fGolem Kılıcı"), "golem");
-
-            case "creeperkilicver" -> give(p, createSword("§aCreeper Kılıcı"), "creeper");
         }
+
         return true;
     }
 
@@ -54,169 +79,184 @@ public class LoginX extends JavaPlugin implements Listener {
     private void openMenu(Player p) {
         Inventory inv = Bukkit.createInventory(null, 27, "§8Kılıç Menü");
 
-        inv.setItem(10, createSword("§5Shulker Kılıcı"));
-        inv.setItem(12, createSword("§1Enderman Kılıcı"));
-        inv.setItem(14, createSword("§2Örümcek Kılıcı"));
-        inv.setItem(16, createSword("§3Phantom Kılıcı"));
-        inv.setItem(22, createSword("§aCreeper Kılıcı"));
+        inv.setItem(10, sword("§5Shulker"));
+        inv.setItem(12, sword("§1Enderman"));
+        inv.setItem(14, sword("§2Örümcek"));
+        inv.setItem(16, sword("§3Phantom"));
+        inv.setItem(22, sword("§aCreeper"));
 
         p.openInventory(inv);
     }
 
-    private ItemStack createSword(String name) {
-        ItemStack item = new ItemStack(Material.NETHERITE_SWORD);
-        ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(name);
-        meta.setLore(List.of("§7Sağ tık: özel yetenek"));
-        item.setItemMeta(meta);
-        return item;
+    private ItemStack sword(String name) {
+        ItemStack i = new ItemStack(Material.NETHERITE_SWORD);
+        ItemMeta m = i.getItemMeta();
+        m.setDisplayName(name + " Kılıcı");
+        m.setLore(List.of("§7Sağ tık özel skill"));
+        i.setItemMeta(m);
+        return i;
     }
 
-    private void give(Player p, ItemStack item, String id) {
-        p.getInventory().addItem(item);
-        p.sendMessage("§aKılıç verildi: " + id);
-    }
-
-    // ===================== COOLDOWN =====================
-    private boolean cd(Player p, String key, int sec) {
-        cooldowns.putIfAbsent(p.getUniqueId(), new HashMap<>());
-        Map<String, Long> map = cooldowns.get(p.getUniqueId());
-
-        long now = System.currentTimeMillis();
-        long end = map.getOrDefault(key, 0L);
-
-        if (now < end) {
-            long left = (end - now) / 1000;
-            p.sendMessage("§cCooldown: " + left + "s");
-            return false;
-        }
-
-        map.put(key, now + (sec * 1000L));
-        return true;
-    }
-
-    // ===================== RIGHT CLICK =====================
+    // ===================== EVENTS =====================
     @EventHandler
-    public void onUse(PlayerInteractEvent e) {
-        if (e.getItem() == null) return;
+    public void onKill(PlayerDeathEvent e) {
+        Player k = e.getEntity().getKiller();
+        if (k != null) kills.merge(k.getUniqueId(), 1, Integer::sum);
+    }
 
-        Player p = e.getPlayer();
-        ItemStack item = e.getItem();
+    @EventHandler
+    public void onBreak(BlockBreakEvent e) {
+        blocksBroken.merge(e.getPlayer().getUniqueId(), 1, Integer::sum);
+    }
 
-        if (item.getType() != Material.NETHERITE_SWORD) return;
-        if (!item.hasItemMeta()) return;
+    // ===================== HOLOGRAM =====================
+    private void spawnHolo(Location loc, String type) {
+        activeHolograms.put(loc, type);
+        buildHolo(loc, type);
+    }
 
-        String name = item.getItemMeta().getDisplayName();
+    private void buildHolo(Location base, String type) {
 
-        Location loc = p.getLocation();
+        List<String> lines = new ArrayList<>();
 
-        // ================= SHULKER =================
-        if (name.contains("Shulker")) {
-            if (!cd(p, "shulker", 30)) return;
-
-            p.sendMessage("§5Shulker gücü aktif!");
-
-            for (Entity en : p.getNearbyEntities(6, 6, 6)) {
-                if (en instanceof Player t) {
-                    t.setVelocity(new Vector(0, 1.2, 0));
-                    t.addPotionEffect(new org.bukkit.potion.PotionEffect(
-                            org.bukkit.potion.PotionEffectType.SLOWNESS, 60, 2));
-                }
-            }
+        if (type.equals("KILLS")) {
+            lines.add("&cTOP KILLS");
+            lines.addAll(top(kills, "kill"));
+        } else if (type.equals("PLAYTIME")) {
+            lines.add("&bTOP TIME");
+            lines.addAll(top(playtime, "dk"));
+        } else {
+            lines.add("&aTOP BLOCKS");
+            lines.addAll(top(blocksBroken, "blok"));
         }
 
-        // ================= ENDERMAN =================
-        if (name.contains("Enderman")) {
-            if (!cd(p, "enderman", 30)) return;
+        double y = 0;
 
-            for (Entity en : p.getNearbyEntities(6, 6, 6)) {
-                if (en instanceof Player t) {
-                    Vector v = p.getLocation().getDirection().multiply(2.5).setY(0.6);
-                    t.setVelocity(v);
-                }
-            }
-            p.sendMessage("§1Enderman dash!");
-        }
+        for (String l : lines) {
+            ArmorStand a = (ArmorStand) base.getWorld().spawnEntity(
+                    base.clone().subtract(0, y, 0),
+                    EntityType.ARMOR_STAND
+            );
 
-        // ================= SPIDER =================
-        if (name.contains("Örümcek")) {
-            if (!cd(p, "spider", 30)) return;
+            a.setInvisible(true);
+            a.setMarker(true);
+            a.setCustomNameVisible(true);
+            a.setCustomName(color(l));
+            a.setGravity(false);
 
-            List<Location> webs = new ArrayList<>();
-
-            for (Entity en : p.getNearbyEntities(4, 4, 4)) {
-                if (en instanceof Player t) {
-                    Location l = t.getLocation();
-                    webs.add(l);
-
-                    l.getBlock().setType(Material.COBWEB);
-                }
-            }
-
-            p.sendMessage("§2Örümcek ağı!");
-
-            new BukkitRunnable() {
-                public void run() {
-                    for (Location l : webs) {
-                        l.getBlock().setType(Material.AIR);
-                    }
-                }
-            }.runTaskLater(this, 70L);
-        }
-
-        // ================= PHANTOM =================
-        if (name.contains("Phantom")) {
-            if (!cd(p, "phantom", 230)) return;
-
-            int i = 0;
-            for (Entity en : p.getNearbyEntities(6, 6, 6)) {
-                if (en instanceof Player t && i < 2) {
-                    t.setGliding(false);
-                    t.addPotionEffect(new org.bukkit.potion.PotionEffect(
-                            org.bukkit.potion.PotionEffectType.SLOW_FALLING, 60, 1));
-                    i++;
-                }
-            }
-
-            p.sendMessage("§3Phantom kilidi!");
-        }
-
-        // ================= GOLEM =================
-        if (name.contains("Golem")) {
-            if (!cd(p, "golem", 230)) return;
-
-            for (Entity en : p.getNearbyEntities(6, 6, 6)) {
-                if (en instanceof Player t) {
-                    t.addPotionEffect(new org.bukkit.potion.PotionEffect(
-                            org.bukkit.potion.PotionEffectType.RESISTANCE, 60, 2));
-
-                    t.addPotionEffect(new org.bukkit.potion.PotionEffect(
-                            org.bukkit.potion.PotionEffectType.SLOWNESS, 40, 3));
-                }
-            }
-
-            p.sendMessage("§fGolem güç!");
-        }
-
-        // ================= CREEPER =================
-        if (name.contains("Creeper")) {
-            if (!cd(p, "creeper", 30)) return;
-
-            loc.getWorld().playSound(loc, Sound.ENTITY_GENERIC_EXPLODE, 1, 1);
-            loc.getWorld().spawnParticle(Particle.EXPLOSION, loc, 2);
-
-            for (Entity en : p.getNearbyEntities(4, 4, 4)) {
-                if (en instanceof Player t) {
-                    Vector v = t.getLocation().toVector()
-                            .subtract(loc.toVector())
-                            .normalize()
-                            .multiply(1.5);
-                    v.setY(0.6);
-                    t.setVelocity(v);
-                }
-            }
-
-            p.sendMessage("§aCreeper boom!");
+            spawnedStands.add(a);
+            y += 0.25;
         }
     }
-}
+
+    private void clearHolos() {
+        for (ArmorStand a : spawnedStands) {
+            if (a != null) a.remove();
+        }
+        spawnedStands.clear();
+    }
+
+    // ===================== TOP =====================
+    private List<String> top(HashMap<UUID, Integer> map, String suf) {
+        if (map.isEmpty()) return List.of("&cNo data");
+
+        List<String> out = new ArrayList<>();
+
+        int r = 1;
+        for (Map.Entry<UUID, Integer> e : map.entrySet()
+                .stream()
+                .sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed())
+                .limit(10)
+                .collect(Collectors.toList())) {
+
+            String n = Bukkit.getOfflinePlayer(e.getKey()).getName();
+            if (n == null) n = "Unknown";
+
+            out.add("&e" + r + ". &f" + n + " &7- &a" + e.getValue() + " " + suf);
+            r++;
+        }
+
+        return out;
+    }
+
+    // ===================== TASKS =====================
+    private void startPlaytime() {
+        new BukkitRunnable() {
+            public void run() {
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    playtime.merge(p.getUniqueId(), 1, Integer::sum);
+                }
+            }
+        }.runTaskTimer(this, 1200, 1200);
+    }
+
+    private void startHoloUpdater() {
+        new BukkitRunnable() {
+            public void run() {
+                if (!activeHolograms.isEmpty()) {
+                    clearHolos();
+                    activeHolograms.forEach(LoginX.this::buildHolo);
+                }
+            }
+        }.runTaskTimer(this, 100, 100);
+    }
+
+    private void startWeeklyReset() {
+        new BukkitRunnable() {
+            public void run() {
+                if (System.currentTimeMillis() > nextResetTime) {
+                    kills.clear();
+                    playtime.clear();
+                    blocksBroken.clear();
+
+                    nextResetTime = System.currentTimeMillis() + 604800000;
+
+                    Bukkit.broadcastMessage(color("&aHaftalık reset!"));
+                }
+            }
+        }.runTaskTimer(this, 20 * 60, 20 * 60 * 60);
+    }
+
+    // ===================== SAVE =====================
+    private void saveStats() {
+        FileConfiguration c = getConfig();
+
+        c.set("reset", nextResetTime);
+
+        kills.forEach((k, v) -> c.set("kills." + k, v));
+        playtime.forEach((k, v) -> c.set("time." + k, v));
+        blocksBroken.forEach((k, v) -> c.set("blocks." + k, v));
+
+        saveConfig();
+    }
+
+    private void loadStats() {
+        FileConfiguration c = getConfig();
+
+        nextResetTime = c.getLong("reset", System.currentTimeMillis() + 604800000);
+    }
+
+    // ===================== COLOR FIX =====================
+    public String color(String text) {
+
+        Pattern p = Pattern.compile("&#([A-Fa-f0-9]{6})");
+        Matcher m = p.matcher(text);
+
+        StringBuffer sb = new StringBuffer();
+
+        while (m.find()) {
+            String hex = m.group(1);
+            StringBuilder rep = new StringBuilder("§x");
+
+            for (char c : hex.toCharArray()) {
+                rep.append("§").append(c);
+            }
+
+            m.appendReplacement(sb, rep.toString());
+        }
+
+        m.appendTail(sb);
+
+        return ChatColor.translateAlternateColorCodes('&', sb.toString());
+    }
+    }
