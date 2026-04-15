@@ -6,27 +6,39 @@ softdepend: [Vault]
 
 commands:
   kilicvermenu:
-    description: Kılıç menüsü
+    description: "Özel kılıçların olduğu menüyü açar."
     permission: loginx.admin
-
   shulkerkilicver:
     permission: loginx.admin
-
   endermankilicver:
     permission: loginx.admin
-
   orumcekkilicver:
     permission: loginx.admin
-
   phantomkilicver:
     permission: loginx.admin
-
   golemkilicver:
     permission: loginx.admin
-
   creeperkilicver:
+    permission: loginx.admin
+  ejderhakilicver:
+    permission: loginx.admin
+  gardiyankilicver:
+    permission: loginx.admin
+  witherkilicver:
+    permission: loginx.admin
+  iade:
+    description: "Ölüm geçmişi ve eşya iade sistemini açar."
+    permission: loginx.admin
+  skorkill:
+    permission: loginx.admin
+  skorzaman:
+    permission: loginx.admin
+  skorblok:
+    permission: loginx.admin
+  skorsil:
     permission: loginx.admin
 
 permissions:
   loginx.admin:
     default: op
+    
