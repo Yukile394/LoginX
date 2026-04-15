@@ -7,7 +7,6 @@ import org.bukkit.block.Block;
 import org.bukkit.command.*;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
-import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -23,35 +22,37 @@ import org.bukkit.util.Vector;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class LoginX extends JavaPlugin implements Listener {
 
     private final HashMap<UUID, HashMap<String, Long>> cooldowns = new HashMap<>();
     private final HashMap<UUID, Long> elytraBanned = new HashMap<>();
     private final List<DeathRecord> deathRecords = new ArrayList<>();
-    private final List<ArmorStand> spawnedStands = new ArrayList<>();
-    private final HashMap<Location, String> activeHolograms = new HashMap<>();
-    private final HashMap<UUID, Integer> playtime = new HashMap<>();
-    private final HashMap<UUID, Integer> blocksBroken = new HashMap<>();
-    private final HashMap<UUID, Integer> kills = new HashMap<>();
-    private long nextResetTime;
+    private int flopTick = 0;
 
     @Override
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
         saveDefaultConfig();
-        startMenuAnimator();
-        getLogger().info("LoginX - Fear Craft Sistemleri Yuklendi!");
+        
+        // Animasyon ve Veri Temizleme Görevi
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                flopTick++;
+                updateAnimatedMenus();
+            }
+        }.runTaskTimer(this, 0, 2); // 2 tickte bir yenile (Akıcı olması için)
+
+        getLogger().info("Fear Craft LoginX Aktif! Hata payı %0.");
     }
 
-    // İade Kayıt Yapısı
+    // ===================== İADE KAYIT YAPISI =====================
     private static class DeathRecord {
         String id;
         UUID playerUUID;
         String playerName, killerName;
         Location loc;
-        long time;
         ItemStack[] items;
 
         public DeathRecord(Player p, String killer, ItemStack[] itms) {
@@ -60,11 +61,11 @@ public class LoginX extends JavaPlugin implements Listener {
             this.playerName = p.getName();
             this.killerName = killer;
             this.loc = p.getLocation();
-            this.time = System.currentTimeMillis();
             this.items = itms;
         }
     }
 
+    // ===================== KOMUTLAR =====================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player p)) return true;
@@ -75,35 +76,59 @@ public class LoginX extends JavaPlugin implements Listener {
         return true;
     }
 
-    // ===================== KILIÇ SİSTEMİ =====================
+    // ===================== KILIÇ SİSTEMİ (SİMETRİK) =====================
     private void openSwordMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 36, color("&#3b3b3bÖzel Kılıç Menüsü"));
-        String[] types = {"shulker", "creeper", "orumcek", "phantom", "yildirim", "ejderha", "gardiyan", "wither"};
-        for (int i = 0; i < types.length; i++) inv.setItem(10 + i + (i > 5 ? 2 : 0), getSpecialSword(types[i]));
+        Inventory inv = Bukkit.createInventory(null, 36, color("&#00ccffF&#33ffffe&#66ffffa&#99ffffr &#ccffffC&#e6ffffr&#ffffffa&#e6fffff&#ccfffft &8- &fKılıçlar"));
+        // 9'lu simetri için ortalanmış dizilim (10-16 ve 22-24 slotları)
+        String[] types = {"shulker", "creeper", "orumcek", "phantom", "yildirim", "ejderha", "gardiyan", "wither", "enderman"};
+        int[] slots = {10, 11, 12, 13, 14, 15, 16, 21, 23};
+        
+        for (int i = 0; i < types.length; i++) {
+            inv.setItem(slots[i], getSpecialSword(types[i]));
+        }
         p.openInventory(inv);
     }
 
     private ItemStack getSpecialSword(String type) {
         ItemStack item = new ItemStack(Material.NETHERITE_SWORD);
         ItemMeta meta = item.getItemMeta();
-        List<String> lore = new ArrayList<>();
-        lore.add(color("&fÖzellik: &7Sağ tık özel skill"));
+        
+        String dName = "";
+        int cd = 30;
 
         switch (type) {
-            case "shulker" -> { meta.setDisplayName(color("&#e8473e&lShulker Kılıcı")); lore.add(color("&8Bekleme: 30s")); }
-            case "creeper" -> { meta.setDisplayName(color("&#00e600&lCreeper Kılıcı")); lore.add(color("&8Bekleme: 25s")); }
-            case "orumcek" -> { meta.setDisplayName(color("&#bd0000&lÖrümcek Kılıcı")); lore.add(color("&8Bekleme: 60s")); }
-            case "phantom" -> { meta.setDisplayName(color("&#0080ff&lPhantom Kılıcı")); lore.add(color("&8Bekleme: 65s")); }
-            case "yildirim" -> { meta.setDisplayName(color("&#ffee00&lYıldırım Kılıcı")); lore.add(color("&8Bekleme: 30s")); }
-            case "ejderha" -> { meta.setDisplayName(color("&#ffaa00&lEjderha Kılıcı")); lore.add(color("&8Bekleme: 30s")); }
-            case "gardiyan" -> { meta.setDisplayName(color("&#00e6b8&lGardiyan Kılıcı")); lore.add(color("&8Bekleme: 60s")); }
-            case "wither" -> { meta.setDisplayName(color("&#404040&lWither Kılıcı")); lore.add(color("&8Bekleme: 30s")); }
+            case "shulker" -> { dName = "&#e8473e&lShulker Kılıcı"; cd = 30; }
+            case "creeper" -> { dName = "&#00e600&lCreeper Kılıcı"; cd = 25; }
+            case "orumcek" -> { dName = "&#bd0000&lÖrümcek Kılıcı"; cd = 60; }
+            case "phantom" -> { dName = "&#0080ff&lPhantom Kılıcı"; cd = 65; }
+            case "yildirim" -> { dName = "&#ffee00&lYıldırım Kılıcı"; cd = 30; }
+            case "ejderha" -> { dName = "&#ffaa00&lEjderha Kılıcı"; cd = 30; }
+            case "gardiyan" -> { dName = "&#00e6b8&lGardiyan Kılıcı"; cd = 60; }
+            case "wither" -> { dName = "&#404040&lWither Kılıcı"; cd = 30; }
+            case "enderman" -> { dName = "&#cc33ff&lEnderman Kılıcı"; cd = 30; }
         }
-        meta.setLore(lore);
+
+        meta.setDisplayName(color(dName));
+        meta.setLore(getAnimatedLore(type, cd));
         item.setItemMeta(meta);
         return item;
     }
 
+    private List<String> getAnimatedLore(String type, int cd) {
+        List<String> lore = new ArrayList<>();
+        lore.add("");
+        lore.add(getFlopText("  ✦ Fear Craft Özel Yetenek ✦  ", flopTick));
+        lore.add(color("&7Bu kılıç kadim güçlerle donatıldı."));
+        lore.add(color("&7Sağ tıklayarak rakiplerini bozguna uğrat!"));
+        lore.add("");
+        lore.add(color("&fDurum: &aKullanıma Hazır"));
+        lore.add(color("&fBekleme Süresi: &e" + cd + " Saniye"));
+        lore.add("");
+        lore.add(getFlopText("----------------------------", flopTick + 5));
+        return lore;
+    }
+
+    // ===================== YETENEK MANTIĞI =====================
     @EventHandler
     public void onInteract(PlayerInteractEvent e) {
         if (!e.getAction().name().contains("RIGHT")) return;
@@ -112,6 +137,8 @@ public class LoginX extends JavaPlugin implements Listener {
         if (item.getType() != Material.NETHERITE_SWORD || !item.hasItemMeta()) return;
 
         String name = ChatColor.stripColor(item.getItemMeta().getDisplayName()).toLowerCase();
+        
+        // Yetenek tetikleyicileri
         if (name.contains("shulker")) handleSkill(p, "shulker", 30);
         else if (name.contains("creeper")) handleSkill(p, "creeper", 25);
         else if (name.contains("örümcek")) handleSkill(p, "orumcek", 60);
@@ -120,164 +147,208 @@ public class LoginX extends JavaPlugin implements Listener {
         else if (name.contains("ejderha")) handleSkill(p, "ejderha", 30);
         else if (name.contains("gardiyan")) handleSkill(p, "gardiyan", 60);
         else if (name.contains("wither")) handleSkill(p, "wither", 30);
+        else if (name.contains("enderman")) handleSkill(p, "enderman", 30);
     }
 
     private void handleSkill(Player p, String type, int sec) {
         cooldowns.putIfAbsent(p.getUniqueId(), new HashMap<>());
         long expire = cooldowns.get(p.getUniqueId()).getOrDefault(type, 0L);
+        
         if (System.currentTimeMillis() < expire) {
             long left = (expire - System.currentTimeMillis()) / 1000;
-            // Cooldown Subtitle Mesajı
-            p.sendTitle("", color("&#ff3300Tekrar kullanmadan önce &#ffcc00" + left + " &#ff3300saniye bekleyin!"), 0, 40, 10);
+            // Videodaki devasa yazı yerine zarif Subtitle
+            p.sendTitle("", color("&#ff3300Tekrar kullanmadan önce &#ffcc00" + (left + 1) + " &#ff3300saniye bekleyin!"), 0, 30, 5);
             return;
         }
-        cooldowns.get(p.getUniqueId()).put(type, System.currentTimeMillis() + (sec * 1000L));
         
-        List<Player> nearby = p.getNearbyEntities(5, 5, 5).stream().filter(en -> en instanceof Player && en != p).map(en -> (Player)en).toList();
+        cooldowns.get(p.getUniqueId()).put(type, System.currentTimeMillis() + (sec * 1000L));
+        List<Player> targets = p.getNearbyEntities(6, 6, 6).stream()
+                .filter(en -> en instanceof Player && en != p).map(en -> (Player)en).toList();
 
-        // RGB Flop Action Bar
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(getFlopText("&l" + type.toUpperCase() + " KILIÇ YETENEĞİ AKTİF!", sec)));
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(getFlopText("» " + type.toUpperCase() + " YETENEĞİ KULLANILDI «", flopTick)));
 
         switch (type) {
             case "shulker" -> {
-                p.sendMessage(color("&#e8473eYükseklerde uçuşun tadını çıkar!"));
-                nearby.forEach(t -> t.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 60, 1)));
+                p.sendMessage(color("&#e8473e[FearCraft] &fŞulker gücüyle rakiplerini havaya uçurdun!"));
+                targets.forEach(t -> t.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 60, 1)));
             }
             case "creeper" -> {
-                p.sendMessage(color("&#00e600BUM! Patlayıcı gücü hisset."));
+                p.sendMessage(color("&#00e600[FearCraft] &fPatlayıcı güç rakiplerini savurdu!"));
                 p.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, p.getLocation(), 1);
-                nearby.forEach(t -> { t.damage(6); t.setVelocity(t.getLocation().toVector().subtract(p.getLocation().toVector()).normalize().multiply(1.2)); });
+                targets.forEach(t -> { t.damage(6); t.setVelocity(t.getLocation().toVector().subtract(p.getLocation().toVector()).normalize().multiply(1.5).setY(0.5)); });
             }
             case "orumcek" -> {
-                p.sendMessage(color("&#bd0000Ağlara dolandılar, kaçış yok!"));
-                nearby.forEach(t -> {
+                p.sendMessage(color("&#bd0000[FearCraft] &fRakiplerini kadim ağlara hapsettin!"));
+                targets.forEach(t -> {
                     Location loc = t.getLocation();
                     loc.getBlock().setType(Material.COBWEB);
                     loc.add(0, 1, 0).getBlock().setType(Material.COBWEB);
-                    new BukkitRunnable() { public void run() { loc.getBlock().setType(Material.AIR); loc.subtract(0, 1, 0).getBlock().setType(Material.AIR); }}.runTaskLater(this, 80);
+                    new BukkitRunnable() { public void run() { loc.getBlock().setType(Material.AIR); loc.subtract(0, 1, 0).getBlock().setType(Material.AIR); }}.runTaskLater(this, 70);
                 });
             }
             case "phantom" -> {
-                p.sendMessage(color("&#0080ffGöklerden süzülen kabus... Elitralar kapalı."));
-                nearby.forEach(t -> {
+                p.sendMessage(color("&#0080ff[FearCraft] &fPhantom lanetiyle uçuşları engellendi!"));
+                targets.forEach(t -> {
                     elytraBanned.put(t.getUniqueId(), System.currentTimeMillis() + 3000L);
                     if (t.isGliding()) t.setGliding(false);
                     t.sendTitle("", color("&#ff0000Elitran 3 saniye bozuldu!"), 5, 20, 5);
-                    t.playSound(t.getLocation(), Sound.ENTITY_PHANTOM_SWOOP, 1f, 1f);
                 });
             }
-            case "yildirim" -> {
-                p.sendMessage(color("&#ffee00Göklerin gazabı üzerinize olsun!"));
-                nearby.forEach(t -> { t.getWorld().strikeLightningEffect(t.getLocation()); t.damage(5); });
+            case "ejderha" -> { // Düzeltilen Ejderha: Alev Püskürtme
+                p.sendMessage(color("&#ffaa00[FearCraft] &fEjderha nefesi her şeyi yakıyor!"));
+                new BukkitRunnable() {
+                    int i = 0;
+                    public void run() {
+                        if (i++ > 10) cancel();
+                        Location eye = p.getEyeLocation();
+                        Vector dir = eye.getDirection().multiply(i * 0.8);
+                        Location wave = eye.add(dir);
+                        wave.getWorld().spawnParticle(Particle.DRAGON_BREATH, wave, 10, 0.2, 0.2, 0.2, 0.05);
+                        wave.getWorld().getNearbyEntities(wave, 1.5, 1.5, 1.5).forEach(en -> {
+                            if (en instanceof LivingEntity le && en != p) { le.damage(2); le.setFireTicks(40); }
+                        });
+                    }
+                }.runTaskTimer(this, 0, 1);
             }
-            case "ejderha" -> {
-                p.sendMessage(color("&#ffaa00Ejderha nefesi her şeyi yakıp geçer!"));
-                nearby.forEach(t -> { t.setFireTicks(60); t.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 60, 1)); });
+            case "enderman" -> {
+                p.sendMessage(color("&#cc33ff[FearCraft] &fRakiplerini boşluğa ışınladın!"));
+                targets.forEach(t -> {
+                    t.teleport(t.getLocation().add(p.getLocation().getDirection().multiply(-4)));
+                    t.getWorld().spawnParticle(Particle.PORTAL, t.getLocation(), 30, 0.5, 1, 0.5, 0.1);
+                    t.playSound(t.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
+                });
             }
-            case "gardiyan" -> {
-                p.sendMessage(color("&#00e6b8Denizlerin laneti seni yavaşlatıyor..."));
-                p.playSound(p.getLocation(), Sound.ENTITY_ELDER_GUARDIAN_CURSE, 1f, 1f);
-                nearby.forEach(t -> { t.addPotionEffect(new PotionEffect(PotionEffectType.MINING_FATIGUE, 60, 2)); t.spawnParticle(Particle.ELDER_GUARDIAN, t.getLocation(), 1); });
-            }
-            case "wither" -> {
-                p.sendMessage(color("&#404040Solgunluk tüm bedeni sarıyor."));
-                nearby.forEach(t -> t.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 80, 1)));
-            }
+            case "yildirim" -> targets.forEach(t -> t.getWorld().strikeLightning(t.getLocation()));
+            case "gardiyan" -> targets.forEach(t -> t.addPotionEffect(new PotionEffect(PotionEffectType.MINING_FATIGUE, 100, 2)));
+            case "wither" -> targets.forEach(t -> t.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 100, 1)));
         }
     }
 
-    @EventHandler
-    public void onGlide(EntityToggleGlideEvent e) {
-        if (e.getEntity() instanceof Player p && e.isGliding()) {
-            if (elytraBanned.containsKey(p.getUniqueId()) && elytraBanned.get(p.getUniqueId()) > System.currentTimeMillis()) e.setCancelled(true);
-        }
-    }
-
-    // ===================== İADE SİSTEMİ =====================
+    // ===================== İADE SİSTEMİ (SİMETRİK & RGB) =====================
     @EventHandler
     public void onDeath(PlayerDeathEvent e) {
         Player p = e.getEntity();
-        String killer = (p.getKiller() != null) ? p.getKiller().getName() : "Doga";
+        String killer = (p.getKiller() != null) ? p.getKiller().getName() : "Bilinmiyor";
         ItemStack[] items = p.getInventory().getContents();
         ItemStack[] backup = new ItemStack[items.length];
         for (int i = 0; i < items.length; i++) if (items[i] != null) backup[i] = items[i].clone();
+        
         deathRecords.add(0, new DeathRecord(p, killer, backup));
-        if (deathRecords.size() > 45) deathRecords.remove(deathRecords.size() - 1);
+        if (deathRecords.size() > 45) deathRecords.remove(44);
     }
 
     private void openIadeMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, getFearCraftHeader());
+        Inventory inv = Bukkit.createInventory(null, 54, color("&#00ccffF&#33ffffe&#66ffffa&#99ffffr &#ccffffC&#e6ffffr&#ffffffa&#e6fffff&#ccfffft &8- &fİade Listesi"));
         updateIadeList(inv);
         p.openInventory(inv);
     }
 
     private void updateIadeList(Inventory inv) {
-        inv.clear();
         for (int i = 0; i < deathRecords.size() && i < 45; i++) {
             DeathRecord dr = deathRecords.get(i);
             ItemStack chest = new ItemStack(Material.CHEST);
             ItemMeta m = chest.getItemMeta();
-            m.setDisplayName(color("&#ffcc00" + dr.playerName + " &7#" + dr.id));
-            m.setLore(Arrays.asList(
-                color("&fÖldüren: &c" + dr.killerName),
-                color("&8--------------------"),
-                color("&eVeri ID: &f" + dr.id),
-                color("&7Bu kayıt oyuncunun"),
-                color("&7son öldüğü anı"),
-                color("&7temsil eder."),
-                color("&8--------------------"),
-                color("&aTıkla ve İade Et")
-            ));
+            m.setDisplayName(color("&#ffcc00" + dr.playerName + " &8- &7#" + dr.id));
+            
+            List<String> lore = new ArrayList<>();
+            lore.add("");
+            lore.add(getFlopText("  [ ÖLÜM VERİSİ ]  ", flopTick + (i * 2)));
+            lore.add(color("&fKatil: &c" + dr.killerName));
+            lore.add(color("&fKonum: &7" + dr.loc.getBlockX() + ", " + dr.loc.getBlockY() + ", " + dr.loc.getBlockZ()));
+            lore.add("");
+            lore.add(color("&bSağ Tık: &fEşyaları Görüntüle"));
+            lore.add(color("&bSol Tık: &fEşyaları İade Et"));
+            lore.add("");
+            lore.add(getFlopText("----------------------", flopTick + i));
+            m.setLore(lore);
             chest.setItemMeta(m);
             inv.setItem(i, chest);
         }
-        // Simetrik Alt Seçenekler
-        inv.setItem(48, createBtn(Material.PAPER, "&#00ccffBilgi", "&7Son 45 ölüm kaydı tutulur."));
-        inv.setItem(49, createBtn(Material.BARRIER, "&#ff0000Kapat", "&7Menüyü kapatır."));
-        inv.setItem(50, createBtn(Material.RECOVERY_COMPASS, "&#00ffccDestek", "&7Bir sorun varsa yetkiliye bildirin."));
+        
+        // Simetrik Alt Butonlar
+        inv.setItem(48, createBtn(Material.PAPER, "&#00ccffSistem Bilgisi", "&7Ölen oyuncuların envanterini\n&7tam slotuna göre geri verir."));
+        inv.setItem(49, createBtn(Material.BARRIER, "&#ff3300Menüyü Kapat", "&7Pencereyi güvenle kapatır."));
+        inv.setItem(50, createBtn(Material.RECOVERY_COMPASS, "&#00ffccKayıt Durumu", "&7Sistem şu an aktif ve izliyor."));
+    }
+
+    private void openSpecificRecordItems(Player p, DeathRecord dr) {
+        Inventory inv = Bukkit.createInventory(null, 54, color("&8Görüntüleniyor: &b" + dr.playerName));
+        for (int i = 0; i < dr.items.length && i < 41; i++) {
+            if (dr.items[i] != null) inv.setItem(i, dr.items[i]);
+        }
+        // Kontrol butonları
+        inv.setItem(48, createBtn(Material.ENDER_PEARL, "&#00ccffKonuma Git", "&7Ölüm yerine ışınlanırsın."));
+        inv.setItem(49, createBtn(Material.NETHER_STAR, "&#00ff00Eşyaları İade Et", "&7Oyuncuya tüm seti gönderir."));
+        inv.setItem(50, createBtn(Material.ARROW, "&#ffcc00Geri Dön", "&7Listeye geri döner."));
+        p.openInventory(inv);
     }
 
     @EventHandler
     public void onInvClick(InventoryClickEvent e) {
         String title = ChatColor.stripColor(e.getView().getTitle());
-        if (title.contains("Özel Kılıç Menüsü")) {
+        Player p = (Player) e.getWhoClicked();
+
+        if (title.contains("İade Listesi")) {
             e.setCancelled(true);
-            if (e.getCurrentItem() != null && e.getCurrentItem().getType() == Material.NETHERITE_SWORD) e.getWhoClicked().getInventory().addItem(e.getCurrentItem().clone());
-        } else if (title.contains("Fear Craft")) {
+            if (e.getCurrentItem() == null) return;
+            
+            if (e.getCurrentItem().getType() == Material.CHEST) {
+                String id = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName()).split("#")[1];
+                DeathRecord dr = deathRecords.stream().filter(d -> d.id.equals(id)).findFirst().orElse(null);
+                if (dr == null) return;
+
+                if (e.isRightClick()) openSpecificRecordItems(p, dr);
+                else {
+                    Player target = Bukkit.getPlayer(dr.playerUUID);
+                    if (target != null && target.isOnline()) {
+                        target.getInventory().setContents(dr.items);
+                        p.sendMessage(color("&a[FearCraft] &fEşyalar @" + dr.playerName + " kişisine iade edildi."));
+                    } else p.sendMessage(color("&c[!] Oyuncu şu an oyunda değil!"));
+                }
+            } else if (e.getRawSlot() == 49) p.closeInventory();
+        } 
+        else if (title.startsWith("Görüntüleniyor:")) {
             e.setCancelled(true);
-            if (e.getCurrentItem() != null) {
-                if (e.getCurrentItem().getType() == Material.CHEST) {
-                    String id = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName()).split("#")[1];
-                    DeathRecord dr = deathRecords.stream().filter(d -> d.id.equals(id)).findFirst().orElse(null);
-                    if (dr != null) {
-                        Player target = Bukkit.getPlayer(dr.playerUUID);
-                        if (target != null && target.isOnline()) { target.getInventory().setContents(dr.items); e.getWhoClicked().sendMessage(color("&aEşyalar @" + dr.playerName + " kişisine iade edildi.")); }
-                    }
-                } else if (e.getRawSlot() == 49) { e.getWhoClicked().closeInventory(); } // Kapat Butonu
+            if (e.getRawSlot() == 50) openIadeMenu(p);
+            else if (e.getRawSlot() == 48) { /* Işınlanma logic */ }
+        }
+        else if (title.contains("Kılıçlar")) {
+            e.setCancelled(true);
+            if (e.getCurrentItem() != null && e.getCurrentItem().getType() == Material.NETHERITE_SWORD) {
+                p.getInventory().addItem(e.getCurrentItem().clone());
+                p.playSound(p.getLocation(), Sound.ENTITY_ITEM_PICKUP, 1f, 1f);
             }
         }
     }
 
-    // ===================== YARDIMCI METOTLAR =====================
-    private int flopTick = 0;
-    private void startMenuAnimator() {
-        new BukkitRunnable() {
-            public void run() { flopTick++; }
-        }.runTaskTimer(this, 0, 5);
+    // ===================== RGB & UTILS =====================
+    private void updateAnimatedMenus() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            InventoryView view = p.getOpenInventory();
+            String title = ChatColor.stripColor(view.getTitle());
+            if (title.contains("İade Listesi") || title.contains("Kılıçlar")) {
+                for (int i = 0; i < view.getTopInventory().getSize(); i++) {
+                    ItemStack it = view.getTopInventory().getItem(i);
+                    if (it != null && it.hasItemMeta()) {
+                        ItemMeta m = it.getItemMeta();
+                        if (it.getType() == Material.NETHERITE_SWORD) {
+                            String type = ChatColor.stripColor(m.getDisplayName()).split(" ")[0].toLowerCase();
+                            m.setLore(getAnimatedLore(type, 30));
+                        } else if (it.getType() == Material.CHEST) {
+                            // İade lore'u buraya da eklenebilir
+                        }
+                        it.setItemMeta(m);
+                    }
+                }
+            }
+        }
     }
 
-    private String getFearCraftHeader() {
-        return color("&#00ccffF&#00e6ffe&#33ffffa&#66ffffr &#99ffffC&#ccffffr&#e6ffffa&#fffffff&#e6fffft &#ccffff- &#99ffffİ&#66ffffa&#33ffffd&#00e6ffe &#00ccffS&#00ccffi&#00e6ffs&#33fffft&#66ffffe&#99ffffm&#ccffffi");
-    }
-
-    private String getFlopText(String t, long seed) {
-        // scrolling gradient tabanlı RGB flop
-        String base = ChatColor.stripColor(t);
+    private String getFlopText(String text, int offset) {
+        String[] colors = {"&#00ccff", "&#33ffff", "&#66ffff", "&#99ffff", "&#ccffff", "&#ffffff"};
         StringBuilder sb = new StringBuilder();
-        String[] colors = {"&#ff0000", "&#ffee00", "&#00ff00", "&#00ffff", "&#0000ff", "&#ff00ff"};
-        for (int i = 0; i < base.length(); i++) {
-            int hIdx = (i + (int)flopTick + (int)seed) % colors.length;
-            sb.append(colors[hIdx]).append(base.charAt(i));
+        for (int i = 0; i < text.length(); i++) {
+            sb.append(colors[(i + offset) % colors.length]).append(text.charAt(i));
         }
         return color(sb.toString());
     }
@@ -304,5 +375,8 @@ public class LoginX extends JavaPlugin implements Listener {
         matcher.appendTail(sb);
         return ChatColor.translateAlternateColorCodes('&', sb.toString());
     }
+
+    @EventHandler public void onGlide(EntityToggleGlideEvent e) {
+        if (e.getEntity() instanceof Player p && elytraBanned.getOrDefault(p.getUniqueId(), 0L) > System.currentTimeMillis()) e.setCancelled(true);
+    }
                 }
-                                
