@@ -157,15 +157,20 @@ public class LoginX extends JavaPlugin implements Listener {
                 // Anahtar Yok - Geri itme ve şık uyarı
                 p.setVelocity(p.getLocation().getDirection().multiply(-0.5).setY(0.4));
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 0.5f);
-                p.getWorld().spawnParticle(Particle.SMOKE_LARGE, loc.clone().add(0.5, 1, 0.5), 10, 0.2, 0.2, 0.2, 0.05);
+                p.getWorld().spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0.5, 1, 0.5), 10, 0.2, 0.2, 0.2, 0.05); // 1.21 Düzeltmesi
                 p.sendTitle(color("&#ff0000&lDUR!"), color("&#ff6666Kasa Anahtarın Yok"), 5, 60, 10);
                 return;
             }
 
             String keyType = inHand.getItemMeta().getPersistentDataContainer().get(keyTag, PersistentDataType.STRING);
             
-            // Eğer anahtar türü ile kasa eşleşmesini istersen buraya if(keyType.equals(activeCrate)) ekleyebilirsin.
-            // Şimdilik anahtar varsa açar.
+            // HANGİ KASA İSE ONUN ANAHTARI KONTROLÜ
+            if (!keyType.equalsIgnoreCase(activeCrate) && !keyType.equalsIgnoreCase("all")) {
+                p.setVelocity(p.getLocation().getDirection().multiply(-0.5).setY(0.4));
+                p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+                p.sendTitle(color("&#ffcc00&lYANLIŞ ANAHTAR!"), color("&#ffff66Bu anahtar bu kasayı açamaz."), 5, 40, 10);
+                return;
+            }
             
             inHand.setAmount(inHand.getAmount() - 1); // Anahtarı tüket
             List<ItemStack> pool = crateItems.getOrDefault(activeCrate, new ArrayList<>());
@@ -178,7 +183,7 @@ public class LoginX extends JavaPlugin implements Listener {
             ItemStack reward = pool.get(new Random().nextInt(pool.size()));
             p.getInventory().addItem(reward.clone());
             p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
-            p.getWorld().spawnParticle(Particle.TOTEM, loc.clone().add(0.5, 1.5, 0.5), 50, 0.5, 0.5, 0.5, 0.1);
+            p.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, loc.clone().add(0.5, 1.5, 0.5), 50, 0.5, 0.5, 0.5, 0.1); // 1.21 Düzeltmesi
             p.sendMessage(color("&#00ff00&lTebrikler! &#aaffaaKasadan eşya çıkardın."));
         }
     }
@@ -217,9 +222,9 @@ public class LoginX extends JavaPlugin implements Listener {
     private ItemStack createKey(Material m, String name, String id) {
         ItemStack item = new ItemStack(m);
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(name); // FlopText updateAnimatedMenus içinde eklenecek
+        meta.setDisplayName(name); 
         meta.getPersistentDataContainer().set(keyTag, PersistentDataType.STRING, id);
-        meta.setLore(Collections.emptyList()); // Lore yok
+        meta.setLore(Collections.emptyList()); 
         item.setItemMeta(meta);
         return item;
     }
@@ -258,7 +263,6 @@ public class LoginX extends JavaPlugin implements Listener {
 
     private void openIadeDetail(Player p, DeathRecord dr) {
         Inventory inv = Bukkit.createInventory(null, 54, color("&#ff9900Ölüm Detayı: &f" + dr.playerName));
-        // Eşyaları tam slotlarına diz
         for (int i = 0; i < dr.items.length; i++) {
             if (dr.items[i] != null && i < 41) inv.setItem(i, dr.items[i]);
         }
@@ -266,7 +270,6 @@ public class LoginX extends JavaPlugin implements Listener {
         ItemStack cam = createBtn(Material.WHITE_STAINED_GLASS_PANE, " ");
         for (int i = 41; i < 45; i++) inv.setItem(i, cam);
         
-        // 3 Alt Seçenek
         inv.setItem(48, createBtn(Material.RED_DYE, "&#ff0000Bu Kaydı Sil", dr.id));
         inv.setItem(49, createBtn(Material.BARRIER, "&#ff3333Geri Dön", dr.id));
         inv.setItem(50, createBtn(Material.LIME_DYE, "&#00ff00Eşyaları İade Et", dr.id));
@@ -286,12 +289,10 @@ public class LoginX extends JavaPlugin implements Listener {
             Material m = clicked.getType();
             String itemName = ChatColor.stripColor(clicked.getItemMeta().getDisplayName());
 
-            // Anahtar Menüsü
             if (title.contains("Anahtar Menüsü") && m != Material.BLACK_STAINED_GLASS_PANE) {
                 p.getInventory().addItem(clicked.clone());
                 p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1f);
             }
-            // Ana İade Menüsü Seçenekleri
             else if (title.equals("Fear Craft - İade")) {
                 if (m == Material.PLAYER_HEAD) {
                     String id = itemName.split("#")[1].replace(")", "");
@@ -315,7 +316,6 @@ public class LoginX extends JavaPlugin implements Listener {
                     p.sendMessage(color("&cTüm ölüm geçmişi silindi."));
                 }
             }
-            // Ölüm Detay Menüsü Seçenekleri
             else if (title.contains("Ölüm Detayı")) {
                 if (m == Material.BARRIER) openIadeMenu(p);
                 else if (m == Material.RED_DYE || m == Material.LIME_DYE) {
@@ -376,7 +376,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 double z = radius * Math.sin(angle);
                 loc.add(x, Math.sin(flopTick * 0.1) * 0.5, z);
                 
-                loc.getWorld().spawnParticle(Particle.FIREWORKS_SPARK, loc, 1, 0, 0, 0, 0);
+                loc.getWorld().spawnParticle(Particle.FIREWORK, loc, 1, 0, 0, 0, 0); // 1.21 Düzeltmesi
                 loc.getWorld().spawnParticle(Particle.END_ROD, entry.getValue().clone().add(0.5, 1.2, 0.5), 1, 0, 0, 0, 0.01);
             }
         }
@@ -443,5 +443,5 @@ public class LoginX extends JavaPlugin implements Listener {
     @EventHandler public void onGlide(EntityToggleGlideEvent e) {
         if (e.getEntity() instanceof Player p && elytraBanned.getOrDefault(p.getUniqueId(), 0L) > System.currentTimeMillis()) e.setCancelled(true);
     }
-                                           }
-                             
+                }
+    
