@@ -1,41 +1,33 @@
 name: LoginX
-version: 1.0.0
+version: 1.1.0
 main: com.loginx.LoginX
 api-version: '1.21'
 softdepend: [Vault]
 
 commands:
-  kilicvermenu:
-    description: "Özel kılıçların olduğu menüyü açar."
+  kasaayarla:
+    description: "Baktığınız bloğu kasa yapar."
     permission: loginx.admin
-  shulkerkilicver:
+    usage: "/kasaayarla <kasa_ismi>"
+  icineitemkoy:
+    description: "Elinizdeki eşyayı kasaya ekler."
     permission: loginx.admin
-  endermankilicver:
+    usage: "/icineitemkoy <kasa_ismi>"
+  efekt:
+    description: "Kasa efekt komutları"
     permission: loginx.admin
-  orumcekkilicver:
+  efektac:
     permission: loginx.admin
-  phantomkilicver:
+  efektkapa:
     permission: loginx.admin
-  golemkilicver:
-    permission: loginx.admin
-  creeperkilicver:
-    permission: loginx.admin
-  ejderhakilicver:
-    permission: loginx.admin
-  gardiyankilicver:
-    permission: loginx.admin
-  witherkilicver:
+  kasaanahtarmenu:
+    description: "Anahtar alma menüsünü açar."
     permission: loginx.admin
   iade:
-    description: "Ölüm geçmişi ve eşya iade sistemini açar."
+    description: "Gelişmiş ölüm geçmişi ve iade menüsü."
     permission: loginx.admin
-  skorkill:
-    permission: loginx.admin
-  skorzaman:
-    permission: loginx.admin
-  skorblok:
-    permission: loginx.admin
-  skorsil:
+  loginxreload:
+    description: "Plugin konfigürasyonunu yeniler."
     permission: loginx.admin
 
 permissions:
