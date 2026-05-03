@@ -1,36 +1,26 @@
 name: LoginX
-version: 1.1.0
+version: 1.2.0
 main: com.loginx.LoginX
 api-version: '1.21'
-softdepend: [Vault]
-
 commands:
   kasaayarla:
-    description: "Baktığınız bloğu kasa yapar."
     permission: loginx.admin
-    usage: "/kasaayarla <kasa_ismi>"
   icineitemkoy:
-    description: "Elinizdeki eşyayı kasaya ekler."
     permission: loginx.admin
-    usage: "/icineitemkoy <kasa_ismi>"
+  kasasil:
+    permission: loginx.admin
+  kasaicsil:
+    permission: loginx.admin
   efekt:
-    description: "Kasa efekt komutları"
     permission: loginx.admin
   efektac:
     permission: loginx.admin
   efektkapa:
     permission: loginx.admin
   kasaanahtarmenu:
-    description: "Anahtar alma menüsünü açar."
     permission: loginx.admin
   iade:
-    description: "Gelişmiş ölüm geçmişi ve iade menüsü."
     permission: loginx.admin
   loginxreload:
-    description: "Plugin konfigürasyonunu yeniler."
     permission: loginx.admin
-
-permissions:
-  loginx.admin:
-    default: op
     
