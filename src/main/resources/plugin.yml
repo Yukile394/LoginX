@@ -41,3 +41,8 @@ commands:
 
   1v1wand:
     permission: loginx.admin
+
+  coldownhiziayarla:
+    permission: loginx.admin
+  1v1ayarla:
+    permission: loginx.admin
