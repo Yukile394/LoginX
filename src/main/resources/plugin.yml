@@ -2,6 +2,7 @@ name: LoginX
 version: 1.2.0
 main: com.loginx.LoginX
 api-version: '1.21'
+
 commands:
   kasaayarla:
     permission: loginx.admin
@@ -23,4 +24,14 @@ commands:
     permission: loginx.admin
   loginxreload:
     permission: loginx.admin
-    
+
+  kasafarkliefektler:
+    permission: loginx.admin
+  kasakeyver:
+    permission: loginx.admin
+  kasakumarmenu:
+    permission: loginx.admin
+  kasasansayarla:
+    permission: loginx.admin
+  kasaidlist:
+    permission: loginx.admin
