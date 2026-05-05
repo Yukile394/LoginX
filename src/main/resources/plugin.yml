@@ -24,7 +24,6 @@ commands:
     permission: loginx.admin
   loginxreload:
     permission: loginx.admin
-
   kasafarkliefektler:
     permission: loginx.admin
   kasakeyver:
@@ -34,4 +33,11 @@ commands:
   kasasansayarla:
     permission: loginx.admin
   kasaidlist:
+    permission: loginx.admin
+
+  korumasurem: {}
+  evet: {}
+  korumakapat: {}
+
+  1v1wand:
     permission: loginx.admin
