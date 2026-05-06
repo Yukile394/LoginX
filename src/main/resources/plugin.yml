@@ -61,3 +61,7 @@ commands:
     permission: loginx.kont.control
   kontdurdur:
     permission: loginx.kont.control
+  kontyerisil:
+    permission: loginx.kont.control
+  kontayarla:
+    permission: loginx.kont.control
