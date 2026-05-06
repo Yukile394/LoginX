@@ -41,8 +41,23 @@ commands:
 
   1v1wand:
     permission: loginx.admin
-
   coldownhiziayarla:
     permission: loginx.admin
   1v1ayarla:
     permission: loginx.admin
+
+  anydesk:
+    permission: loginx.kont.use
+  discord2:
+    permission: loginx.kont.use
+  itiraf:
+    permission: loginx.kont.use
+  kontyeri:
+    permission: loginx.kont.use
+
+  kontal:
+    permission: loginx.kont.control
+  kontcikar:
+    permission: loginx.kont.control
+  kontdurdur:
+    permission: loginx.kont.control
