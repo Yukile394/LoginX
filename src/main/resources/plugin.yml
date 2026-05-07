@@ -65,3 +65,20 @@ commands:
     permission: loginx.kont.control
   kontyeriayarla:
     permission: loginx.kont.control
+
+  dueller: {}
+  1v1: {}
+  duelayarlar: {}
+
+  duelyeriekle2:
+    permission: loginx.admin
+  duelyeriekle1:
+    permission: loginx.admin
+  1v1randomsil:
+    permission: loginx.admin
+  duelsil:
+    permission: loginx.admin
+  duelolustur:
+    permission: loginx.admin
+  duelayarlaradmin:
+    permission: loginx.admin
