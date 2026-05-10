@@ -82,3 +82,15 @@ commands:
     permission: loginx.admin
   duelayarlaradmin:
     permission: loginx.admin
+
+  kontyeryetkili:
+    permission: loginx.kont.control
+
+  izinkaldir:
+    permission: loginx.admin
+
+  izinver:
+    permission: loginx.admin
+
+  logingoster:
+    permission: loginx.admin
