@@ -94,3 +94,9 @@ commands:
 
   logingoster:
     permission: loginx.admin
+
+  1v1kabul:
+    permission: loginx.duel.use
+
+  1v1reddet:
+    permission: loginx.duel.use
