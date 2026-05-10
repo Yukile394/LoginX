@@ -65,10 +65,8 @@ commands:
     permission: loginx.kont.control
   kontyeriayarla:
     permission: loginx.kont.control
-
-  dueller: {}
-  1v1: {}
-  duelayarlar: {}
+  kontyeryetkili:
+    permission: loginx.kont.control
 
   duelyeriekle2:
     permission: loginx.admin
@@ -80,27 +78,30 @@ commands:
     permission: loginx.admin
   duelolustur:
     permission: loginx.admin
+  duelayarlar:
+    permission: loginx.admin
   duelayarlaradmin:
     permission: loginx.admin
 
-  kontyeryetkili:
-    permission: loginx.kont.control
-
   izinkaldir:
     permission: loginx.admin
-
   izinver:
     permission: loginx.admin
-
   logingoster:
     permission: loginx.admin
 
-  1v1kabul:
-    permission: loginx.duel.use
-
-  1v1reddet:
-    permission: loginx.duel.use
+  # Herkes kullanabilsin
+  dueller: {}
+  1v1: {}
+  1v1kabul: {}
+  1v1reddet: {}
 
   stashaç: {}
   stashkapa: {}
-  stashac: {}
+
+  bakımaoyuncual:
+    permission: loginx.admin
+  bakımaal:
+    permission: loginx.admin
+  bakimdancikar:
+    permission: loginx.admin
