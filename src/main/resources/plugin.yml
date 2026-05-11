@@ -46,6 +46,12 @@ commands:
   1v1ayarla:
     permission: loginx.admin
 
+  # EKLENENLER
+  yerekoymaengelle:
+    permission: loginx.admin
+  kilicvurmahiziayarla:
+    permission: loginx.admin
+
   anydesk:
     permission: loginx.kont.use
   discord2:
