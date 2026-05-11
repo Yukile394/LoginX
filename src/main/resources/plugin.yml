@@ -46,7 +46,6 @@ commands:
   1v1ayarla:
     permission: loginx.admin
 
-  # EKLENENLER
   yerekoymaengelle:
     permission: loginx.admin
   kilicvurmahiziayarla:
@@ -94,6 +93,22 @@ commands:
   izinver:
     permission: loginx.admin
   logingoster:
+    permission: loginx.admin
+
+  # NPC Komutları
+  npolustur:
+    permission: loginx.admin
+  nprename:
+    permission: loginx.admin
+  npskin:
+    permission: loginx.admin
+  npdondur:
+    permission: loginx.admin
+  npboyut:
+    permission: loginx.admin
+  npkomutver:
+    permission: loginx.admin
+  npsil:
     permission: loginx.admin
 
   # Herkes kullanabilsin
