@@ -14,21 +14,23 @@ java {
 
 repositories {
     mavenCentral()
+
     maven { url = "https://repo.papermc.io/repository/maven-public/" }
+
     maven { url = "https://jitpack.io" }
-    
-    // Citizens repo
+
+    // Citizens
     maven { url = "https://maven.citizensnpcs.co/repo" }
+
+    // Libby dependency for Citizens
+    maven { url = "https://repo.byteflux.net/repository/maven-public/" }
 }
 
 dependencies {
-    // Paper
     compileOnly "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
-    
-    // Vault
+
     compileOnly 'com.github.MilkBowl:VaultAPI:1.7'
-    
-    // Citizens
+
     compileOnly 'net.citizensnpcs:citizens-main:2.0.35-SNAPSHOT'
 }
 
