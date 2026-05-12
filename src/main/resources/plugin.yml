@@ -3,6 +3,8 @@ version: 1.2.0
 main: com.loginx.LoginX
 api-version: '1.21'
 
+depend: [Citizens]
+
 commands:
   kasaayarla:
     permission: loginx.admin
@@ -95,7 +97,6 @@ commands:
   logingoster:
     permission: loginx.admin
 
-  # NPC Komutları
   npolustur:
     permission: loginx.admin
   nprename:
@@ -111,7 +112,6 @@ commands:
   npsil:
     permission: loginx.admin
 
-  # Herkes kullanabilsin
   dueller: {}
   1v1: {}
   1v1kabul: {}
