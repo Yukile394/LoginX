@@ -120,9 +120,15 @@ commands:
   stashaç: {}
   stashkapa: {}
 
-  bakımaoyuncual:
+  bakimaa:
     permission: loginx.admin
-  bakımaal:
-    permission: loginx.admin
+    description: Bakım modunu aç
+
   bakimdancikar:
     permission: loginx.admin
+    description: Bakım modunu kapat
+
+  bakimaoyuncual:
+    permission: loginx.admin
+    description: Bakıma oyuncu ekle
+    usage: /bakimaoyuncual <oyuncu>
