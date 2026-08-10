@@ -116,6 +116,9 @@ commands:
   1v1: {}
   1v1kabul: {}
   1v1reddet: {}
+  duel:
+    description: Duel daveti gönder (ayar ekranı açılır)
+    usage: /duel <oyuncu>
 
   stashaç: {}
   stashkapa: {}
@@ -132,3 +135,17 @@ commands:
     permission: loginx.admin
     description: Bakıma oyuncu ekle
     usage: /bakimaoyuncual <oyuncu>
+
+  duelspawnayarla:
+    permission: loginx.admin
+    description: Duel berabere spawn noktasını ayarla
+
+  duelberabere:
+    description: Karşı oyuncuya berabere teklifi gönder
+    usage: /duelberabere <oyuncu>
+
+  duelberaberekabul:
+    description: Gelen berabere teklifini kabul et
+
+  duelberaberereddet:
+    description: Gelen berabere teklifini reddet
