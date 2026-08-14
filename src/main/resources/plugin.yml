@@ -14,6 +14,10 @@ commands:
     permission: loginx.admin
   kasaicsil:
     permission: loginx.admin
+  kasarenkayarla:
+    permission: loginx.admin
+    description: Bir kasanın hologram rengini ayarla
+    usage: /kasarenkayarla <kasaismi> <renk1,renk2,renk3...>
   efekt:
     permission: loginx.admin
   efektac:
@@ -26,6 +30,10 @@ commands:
     permission: loginx.admin
   loginxreload:
     permission: loginx.admin
+  loginx:
+    permission: loginx.admin
+    description: LoginX ana komutu
+    usage: /loginx reload
   kasafarkliefektler:
     permission: loginx.admin
   kasakeyver:
