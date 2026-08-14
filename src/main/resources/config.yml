@@ -1,29 +1,16 @@
-# --- GİRİŞ & KAYIT AYARLARI ---
-login_timeout: 60
-title_interval: 4
-title_colors:
-  register:
-    header: "&#FF69B4&lKAYIT OL"
-    footer: "&#FFB6C1&oSisteme kayıt için: /register <sifre> <sifre>"
-  login:
-    header: "&#00FFFF&lGIRIS YAP"
-    footer: "&#E0FFFF&oDevam etmek için: /login <sifre>"
+# ─────────────────────────────────────────────
+#  LOGINX CONFIG
+# ─────────────────────────────────────────────
 
-# --- MODERASYON VE CEZA ---
-punishments:
-  bans: {}
-  mutes: {}
-  ipbans: {}
+# --- KÜFÜR / SPAM ALGILAMA SİSTEMİ RENKLERİ ---
+# Renkleri hex kodu olarak (başında # ile, & olmadan) yazın.
+# uyari-rengi  -> "KÜFÜR Uyarısı" / "SPAM Uyarısı" etiketinin rengi (örn: 1/5, 2/5...)
+# mute-rengi   -> 5/5 olup susturulduğunda gösterilen "10 dakika susturuldun!" mesajının rengi
+kufur:
+  uyari-rengi: "#d6a45c"
+  mute-rengi: "#ff4444"
 
-trusted_players: []
-
-# --- PREMİUM ÖZELLİK AYARLARI ---
-features:
-  chat:
-    anti_spam_saniye: 3
-    mention_ses_acik: true
-  koruma:
-    void_kurtarma_acik: true
-    creeper_blok_hasari_engelle: true
-    tnt_blok_hasari_engelle: false
-    
+# --- KASA / HOLOGRAM VERİLERİ ---
+# Buradan sonrası plugin tarafından otomatik yönetilir (crates, crateColors, kontyeri,
+# kontyetkili, izinli, vb.) — elle düzenlemeniz gerekmez, /kasarenkayarla ve diğer
+# komutlar buraya kendi kendine yazar.
