@@ -157,3 +157,19 @@ commands:
 
   duelberaberereddet:
     description: Gelen berabere teklifini reddet
+
+  gunlukodul:
+    description: Silvera günlük ödül menüsünü aç
+    usage: /gunlukodul
+
+  günlük:
+    description: Silvera günlük ödül menüsünü aç (/günlük ödül)
+    usage: /günlük ödül
+
+  kitkasası:
+    description: Tek seferlik Kit Kasası ödülünü al
+    usage: /kitkasası
+
+  kitkasasi:
+    description: Tek seferlik Kit Kasası ödülünü al (alternatif yazım)
+    usage: /kitkasasi
