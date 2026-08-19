@@ -61,6 +61,11 @@ commands:
   kilicvurmahiziayarla:
     permission: loginx.admin
 
+  arenawand:
+    permission: loginx.admin
+    description: Elytra yasaklı arena bölgesi işaretleyici wand'ı verir
+    usage: /arenawand
+
   anydesk:
     permission: loginx.kont.use
   discord2:
