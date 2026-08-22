@@ -798,19 +798,19 @@ public class LoginX extends JavaPlugin implements Listener {
             for (Player on : new ArrayList<>(Bukkit.getOnlinePlayers())) {
                 if (on.isOp() || on.hasPermission("loginx.admin") || bakimIzinli.contains(on.getUniqueId())) continue;
                 on.kickPlayer(color(
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                    "&#ffffff&l      ⚙  SUNUCU BAKIMDA  ⚙\n" +
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+                    "&#0099ff&l" +
+                    "&#ffffff&l        " +
+                    "&#0099ff&l " +
                     "\n" +
                     "&#aaaaaa  Sunucumuz bakım ve güncelleme\n" +
                     "&#aaaaaa  işlemleri için geçici olarak\n" +
                     "&#aaaaaa  kapatılmıştır.\n" +
                     "\n" +
-                    "&#ffcc00  ✦ &fBakım bitince tekrar\n" +
-                    "&#ffcc00  ✦ &fbağlanabilirsin.\n" +
+                    "&#ffcc00  &fBakım bitince tekrar\n" +
+                    "&#ffcc00  &fbağlanabilirsin.\n" +
                     "\n" +
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                    "&#555555  Anlayışın için teşekkürler!"
+                    "&#0099ff&l " +
+                    ""
                 ));
                 atilan++;
             }
