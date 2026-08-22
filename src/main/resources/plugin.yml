@@ -4,6 +4,7 @@ main: com.loginx.LoginX
 api-version: '1.21'
 
 depend: [Citizens]
+softdepend: [LuckPerms]
 
 commands:
   kasaayarla:
@@ -87,6 +88,9 @@ commands:
     permission: loginx.kont.control
   kontyeryetkili:
     permission: loginx.kont.control
+  kontyeriayarlayetkili:
+    permission: loginx.kont.control
+    description: Kendi konumunu (bakış açın dahil) kişisel kont yerin olarak ayarlar
 
   duelyeriekle2:
     permission: loginx.admin
@@ -109,6 +113,15 @@ commands:
     permission: loginx.admin
   logingoster:
     permission: loginx.admin
+
+  permkomutyetkiver:
+    permission: loginx.admin
+    description: Bir LuckPerms grubuna LoginX komutu kullanma izni verir
+    usage: /permkomutyetkiver <lpGrup> <komut>
+  permkomutsil:
+    permission: loginx.admin
+    description: Bir LuckPerms grubunun LoginX komutu iznini kaldırır
+    usage: /permkomutsil <lpGrup> <komut>
 
   npolustur:
     permission: loginx.admin
