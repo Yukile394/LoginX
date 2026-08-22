@@ -77,9 +77,13 @@ commands:
     permission: loginx.kont.use
 
   kontal:
-    permission: loginx.kont.control
+    permission: loginx.admin
+  kontalirken:
+    permission: loginx.admin
+    description: /kontal ile aynı komut (takma ad)
+    usage: /kontalirken <oyuncu> <süre örn 7gün 30dk 2saat>
   kontcikar:
-    permission: loginx.kont.control
+    permission: loginx.admin
   kontdurdur:
     permission: loginx.kont.control
   kontyerisil:
