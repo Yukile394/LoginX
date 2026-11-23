@@ -151,6 +151,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private NamespacedKey lootChestTag;   // bu item bir duel sandığı mı (marker)
     private NamespacedKey lootChestData;  // içindeki eşyaların serileştirilmiş (Base64) hali
     private NamespacedKey lootChestOwner; // eşyaların sahibinin adı (lore/yeniden oluşturma için)
+    private NamespacedKey duelGuiTag;     // duel menülerindeki butonların kimliği (arena:<id>, toggle:<anahtar>, confirm)
 
     // ─── Duel/1v1 Room ölüm sonrası komut kilidi: uid -> ölüm zamanı (ms) ───
     private final HashMap<UUID, Long> duelDeathTime = new HashMap<>();
@@ -243,10 +244,10 @@ public class LoginX extends JavaPlugin implements Listener {
     //  INNER: CrateSession
     // ─────────────────────────────────────────────
     private static class CrateSession {
-        Inventory inv; ItemStack reward; int tick; boolean done; String crateName; int spinDuration;
-        CrateSession(Inventory inv, ItemStack reward, String crateName, int spinDuration) {
+        Inventory inv; ItemStack reward; int tick; boolean done; String crateName; int spinDuration; float chance;
+        CrateSession(Inventory inv, ItemStack reward, String crateName, int spinDuration, float chance) {
             this.inv = inv; this.reward = reward; this.tick = 0;
-            this.done = false; this.crateName = crateName; this.spinDuration = spinDuration;
+            this.done = false; this.crateName = crateName; this.spinDuration = spinDuration; this.chance = chance;
         }
     }
 
@@ -273,6 +274,15 @@ public class LoginX extends JavaPlugin implements Listener {
     private final List<ElytraZone>        elytraZones = new ArrayList<>();
     private final HashMap<UUID, Long>     elytraZoneWarnCooldown = new HashMap<>();
     private NamespacedKey arenaWandTag;
+
+    // ─── Çift Zıplama ───
+    private static final String DJ_TAG = "Çift Zıplama";
+    private final List<ElytraZone>        jumpZones         = new ArrayList<>();
+    private final HashMap<UUID, Location> jumpWandPos1      = new HashMap<>();
+    private final HashMap<UUID, Location> jumpWandPos2      = new HashMap<>();
+    private final Set<UUID>               doubleJumpEnabled = new HashSet<>();   // uçuş izni bu sistem tarafından açılanlar
+    private final HashMap<UUID, Long>     doubleJumpReadyAt = new HashMap<>();   // bekleme bitiş zamanı (ms)
+    private NamespacedKey doubleJumpWandTag;
     private NamespacedKey lootChestFillerTag;
 
     private static class ElytraZone {
@@ -327,7 +337,9 @@ public class LoginX extends JavaPlugin implements Listener {
         lootChestData = new NamespacedKey(this, "duel_sandigi_veri");
         lootChestOwner = new NamespacedKey(this, "duel_sandigi_sahibi");
         dailyRewardDayTag = new NamespacedKey(this, "gunluk_odul_gun");
+        duelGuiTag = new NamespacedKey(this, "duel_menu");
         arenaWandTag = new NamespacedKey(this, "arena_wand");
+        doubleJumpWandTag = new NamespacedKey(this, "ciftziplama_wand");
         lootChestFillerTag = new NamespacedKey(this, "duel_sandigi_dolgu");
         saveDefaultConfig(); loadData();
         // Kont yeri config'den yükle
@@ -419,6 +431,11 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onDisable() {
         // Hologramları temizle
         removeAllHolograms();
+        for (UUID id : new ArrayList<>(doubleJumpEnabled)) {
+            Player dp = Bukkit.getPlayer(id);
+            if (dp != null) { dp.setFlying(false); dp.setAllowFlight(false); }
+        }
+        doubleJumpEnabled.clear();
         saveData();
     }
 
@@ -473,6 +490,14 @@ public class LoginX extends JavaPlugin implements Listener {
             return true;
         }
 
+        // ─── /ciftziplama — çift zıplama bölgesi (wand, olustur, saniye, sil) ───
+        if (cmdName.equals("ciftziplama")) {
+            if (!(sender instanceof Player p)) { sender.sendMessage("Bu komut yalnızca oyuncular tarafından kullanılabilir."); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(uiErr(DJ_TAG, "Bu komutu kullanma yetkin yok.")); return true; }
+            handleDoubleJumpCommand(p, args);
+            return true;
+        }
+
         // ─── Günlük Ödül — tüm oyuncular kullanabilir ───
         // "/günlük ödül" iki kelimeli bir komut olduğu için "günlük" ana komut, "ödül" argüman olarak işlenir.
         // plugin.yml içinde "günlük" komutunun tanımlı olması gerekir. Kolaylık olması için "gunlukodul"
@@ -513,54 +538,54 @@ public class LoginX extends JavaPlugin implements Listener {
         // /duelolustur (id örn: #1)
         if (cmdName.equals("duelolustur")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /duelolustur <id örn: #1>")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /duelolustur <id>")); return true; }
             String did = args[0];
-            if (duelSpawn1.containsKey(did)) { p.sendMessage(color("&cBu ID zaten var: " + did + " — /duelsil ile sil.")); return true; }
+            if (duelSpawn1.containsKey(did)) { p.sendMessage(duelErr("Bu ID zaten kullanılıyor: " + did + ". Önce /duelsil ile sil.")); return true; }
             duelSpawn1.put(did, null); duelSpawn2.put(did, null);
             getConfig().set("duels." + did + ".id", did); saveConfig();
-            p.sendMessage(color("&#00ff88&l[DUEL] &f" + did + " &7oluşturuldu. Şimdi &e/duelyeriekle1 " + did + " &7ve &e/duelyeriekle2 " + did + " &7yaz."));
+            p.sendMessage(duel("Arena " + hl(did) + " oluşturuldu. Spawn noktaları için " + hl("/duelyeriekle1 " + did) + " ve " + hl("/duelyeriekle2 " + did) + " komutlarını kullan."));
             return true;
         }
 
         // /duelsil (id)
         if (cmdName.equals("duelsil")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /duelsil <id>")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /duelsil <id>")); return true; }
             String did = args[0];
             duelSpawn1.remove(did); duelSpawn2.remove(did);
             UUID[] dp = duelPlayers.remove(did);
             duelArenaRules.remove(did);
             if (dp != null) for (UUID u : dp) playerDuel.remove(u);
             getConfig().set("duels." + did, null); saveConfig();
-            p.sendMessage(color("&#ff4444&l[DUEL] &f" + did + " &c silindi."));
+            p.sendMessage(duel("Arena " + hl(did) + " silindi."));
             return true;
         }
 
         // /duelyeriekle1 (duelid)
         if (cmdName.equals("duelyeriekle1")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /duelyeriekle1 <id>")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /duelyeriekle1 <id>")); return true; }
             String did = args[0];
-            if (!duelSpawn1.containsKey(did)) { p.sendMessage(color("&cDuel bulunamadı. Önce /duelolustur " + did)); return true; }
+            if (!duelSpawn1.containsKey(did)) { p.sendMessage(duelErr("Arena bulunamadı. Önce /duelolustur " + did + " komutunu kullan.")); return true; }
             duelSpawn1.put(did, p.getLocation().clone());
             getConfig().set("duels." + did + ".spawn1", p.getLocation()); saveConfig();
-            p.sendMessage(color("&#00ff88&l[DUEL] &f" + did + " &7— Spawn 1 ayarlandı: &b" + p.getLocation().getBlockX() + "," + p.getLocation().getBlockY() + "," + p.getLocation().getBlockZ()));
+            p.sendMessage(duel("Arena " + hl(did) + " için spawn 1 ayarlandı: " + hl(p.getLocation().getBlockX() + ", " + p.getLocation().getBlockY() + ", " + p.getLocation().getBlockZ())));
             return true;
         }
 
         // /duelyeriekle2 (duelid)
         if (cmdName.equals("duelyeriekle2")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /duelyeriekle2 <id>")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /duelyeriekle2 <id>")); return true; }
             String did = args[0];
-            if (!duelSpawn2.containsKey(did)) { p.sendMessage(color("&cDuel bulunamadı. Önce /duelolustur " + did)); return true; }
+            if (!duelSpawn2.containsKey(did)) { p.sendMessage(duelErr("Arena bulunamadı. Önce /duelolustur " + did + " komutunu kullan.")); return true; }
             duelSpawn2.put(did, p.getLocation().clone());
             getConfig().set("duels." + did + ".spawn2", p.getLocation()); saveConfig();
-            p.sendMessage(color("&#00ff88&l[DUEL] &f" + did + " &7— Spawn 2 ayarlandı: &b" + p.getLocation().getBlockX() + "," + p.getLocation().getBlockY() + "," + p.getLocation().getBlockZ()));
+            p.sendMessage(duel("Arena " + hl(did) + " için spawn 2 ayarlandı: " + hl(p.getLocation().getBlockX() + ", " + p.getLocation().getBlockY() + ", " + p.getLocation().getBlockZ())));
             return true;
         }
 
@@ -574,12 +599,12 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmdName.equals("duelberaberekabul")) {
             if (!(sender instanceof Player p)) return true;
             UUID requesterUid = duelDrawRequest.remove(p.getUniqueId());
-            if (requesterUid == null) { p.sendMessage(color("&#c94848&l[DUEL] &fBekleyen bir berabere teklifin yok.")); return true; }
+            if (requesterUid == null) { p.sendMessage(duelErr("Bekleyen bir berabere teklifin yok.")); return true; }
             String arenaId = playerDuel.get(p.getUniqueId());
             Player requester = Bukkit.getPlayer(requesterUid);
             if (arenaId == null || requester == null || !requester.isOnline()
                 || !arenaId.equals(playerDuel.get(requesterUid))) {
-                p.sendMessage(color("&#c94848&l[DUEL] &fDuel artık geçerli değil.")); return true;
+                p.sendMessage(duelErr("Duel artık geçerli değil.")); return true;
             }
             UUID[] dp = duelPlayers.remove(arenaId);
             duelArenaRules.remove(arenaId);
@@ -589,10 +614,10 @@ public class LoginX extends JavaPlugin implements Listener {
             for (Player dpX : new Player[]{p, requester}) {
                 if (dpX != null && dpX.isOnline()) {
                     dpX.sendTitle(
-                        duelFlop("BERABERE!", true),
-                        color("&#aaaaaa&oSpawna ışınlanıyorsunuz..."),
+                        duelFlop("Berabere", true),
+                        color(UI_SUB + "Spawn noktasına ışınlanıyorsun"),
                         5, 60, 15);
-                    dpX.sendMessage(color("  " + duelFlop("Duel berabere sonuçlandı!", true)));
+                    dpX.sendMessage(duel("Duel berabere sonuçlandı."));
                     dpX.playSound(dpX.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.2f);
                     teleportToSpawn(dpX);
                 }
@@ -604,11 +629,11 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmdName.equals("duelberaberereddet")) {
             if (!(sender instanceof Player p)) return true;
             UUID requesterUid = duelDrawRequest.remove(p.getUniqueId());
-            if (requesterUid == null) { p.sendMessage(color("&#c94848&l[DUEL] &fBekleyen bir berabere teklifin yok.")); return true; }
+            if (requesterUid == null) { p.sendMessage(duelErr("Bekleyen bir berabere teklifin yok.")); return true; }
             Player requester = Bukkit.getPlayer(requesterUid);
-            p.sendMessage(color("&#c94848&l[DUEL] &fBerabere teklifini reddettin."));
+            p.sendMessage(duel("Berabere teklifini reddettin."));
             if (requester != null && requester.isOnline())
-                requester.sendMessage(color("&#c94848&l[DUEL] &f" + p.getName() + " &7berabere teklifini reddetti."));
+                requester.sendMessage(duel(hl(p.getName()) + " berabere teklifini reddetti."));
             return true;
         }
 
@@ -651,11 +676,10 @@ public class LoginX extends JavaPlugin implements Listener {
         // /duelspawnayarla — durduğun bloğu duel/1v1 bitince ışınlanılacak özel spawn yap
         if (cmdName.equals("duelspawnayarla")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
             duelOzelSpawn = p.getLocation().clone();
             getConfig().set("duelozelspawn", duelOzelSpawn); saveConfig();
-            p.sendMessage(color("&#00ff88&l[DUEL SPAWN] &fDuel/1v1 bitince ışınlanılacak nokta ayarlandı: &b"
-                + duelOzelSpawn.getBlockX() + ", " + duelOzelSpawn.getBlockY() + ", " + duelOzelSpawn.getBlockZ()));
+            p.sendMessage(duel("Duel ve 1v1 sonrası ışınlanılacak nokta ayarlandı: " + hl(duelOzelSpawn.getBlockX() + ", " + duelOzelSpawn.getBlockY() + ", " + duelOzelSpawn.getBlockZ())));
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.4f);
             return true;
         }
@@ -669,14 +693,14 @@ public class LoginX extends JavaPlugin implements Listener {
         // /duelayarlaradmin — yetkili duel ayarlarını görür
         if (cmdName.equals("duelayarlaradmin")) {
             if (!(sender instanceof Player p)) return true;
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(duelErr("Bu komutu kullanma yetkin yok.")); return true; }
             openDuelSettingsMenu(p, true); return true;
         }
 
         // /1v1 (oyuncu) — duel daveti gönder (o anki kayıtlı kişisel ayarlarla)
         if (cmdName.equals("1v1")) {
             if (!(sender instanceof Player p)) return true;
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /1v1 <oyuncu>")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /1v1 <oyuncu>")); return true; }
             Player target = Bukkit.getPlayer(args[0]);
             sendDuelInvite(p, target, args.length > 0 ? args[0] : "");
             return true;
@@ -685,12 +709,12 @@ public class LoginX extends JavaPlugin implements Listener {
         // /duel (oyuncu) — davet göndermeden önce ayar ekranını açar
         if (cmdName.equals("duel")) {
             if (!(sender instanceof Player p)) return true;
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /duel <oyuncu>")); return true; }
+            if (args.length < 1) { p.sendMessage(duelErr("Kullanım: /duel <oyuncu>")); return true; }
             if (args[0].equalsIgnoreCase("berabere")) { handleDuelBerabereCommand(p); return true; }
             Player target = Bukkit.getPlayer(args[0]);
-            if (target == null || target.equals(p)) { p.sendMessage(color("&c" + args[0] + " çevrimiçi değil.")); return true; }
-            if (playerDuel.containsKey(p.getUniqueId())) { p.sendMessage(color("&#ff4444&l[DUEL] &cZaten bir dueldasın.")); return true; }
-            if (playerDuel.containsKey(target.getUniqueId())) { p.sendMessage(color("&#ff4444&l[DUEL] &c" + target.getName() + " zaten bir duelda.")); return true; }
+            if (target == null || target.equals(p)) { p.sendMessage(duelErr(args[0] + " çevrimiçi değil.")); return true; }
+            if (playerDuel.containsKey(p.getUniqueId())) { p.sendMessage(duelErr("Zaten bir dueldasın.")); return true; }
+            if (playerDuel.containsKey(target.getUniqueId())) { p.sendMessage(duelErr(target.getName() + " zaten bir duelda.")); return true; }
             duelPendingTarget.put(p.getUniqueId(), target.getUniqueId());
             openDuelInviteMenu(p, target);
             return true;
@@ -700,9 +724,9 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmdName.equals("1v1kabul")) {
             if (!(sender instanceof Player p)) return true;
             UUID inviterUid = duelInvite.get(p.getUniqueId());
-            if (inviterUid == null) { p.sendMessage(color("&cBekleyen duel davetin yok.")); return true; }
+            if (inviterUid == null) { p.sendMessage(duelErr("Bekleyen duel davetin yok.")); return true; }
             Player inviter = Bukkit.getPlayer(inviterUid);
-            if (inviter == null) { p.sendMessage(color("&cDavet eden oyuncu çevrimdışı.")); duelInvite.remove(p.getUniqueId()); return true; }
+            if (inviter == null) { p.sendMessage(duelErr("Davet eden oyuncu çevrimdışı.")); duelInvite.remove(p.getUniqueId()); return true; }
             cancelDuelInviteTimeout(p.getUniqueId());
             boolean[] rules = new boolean[]{
                 duelInviteWeb.getOrDefault(p.getUniqueId(), false),
@@ -715,8 +739,8 @@ public class LoginX extends JavaPlugin implements Listener {
             // ── Elytra engellemesi açıkken (ely kapalı) taraflardan birinde Elytra varsa duel başlamasın ──
             if (!rules[1] && (hasElytraInInventory(inviter) || hasElytraInInventory(p))) {
                 String culprit = hasElytraInInventory(p) ? p.getName() : inviter.getName();
-                p.sendMessage(color("&#ff4444&l[DUEL] &fBu duelde Elytra kapalı! &f" + culprit + " &7üzerinde/envanterinde Elytra olduğu sürece duel başlayamaz."));
-                inviter.sendMessage(color("&#ff4444&l[DUEL] &fBu duelde Elytra kapalı! &f" + culprit + " &7üzerinde/envanterinde Elytra olduğu sürece duel başlayamaz."));
+                p.sendMessage(duelErr("Bu duelde Elytra kapalı. " + culprit + " envanterindeki Elytra'yı çıkarmadan duel başlayamaz."));
+                inviter.sendMessage(duelErr("Bu duelde Elytra kapalı. " + culprit + " envanterindeki Elytra'yı çıkarmadan duel başlayamaz."));
                 return true;
             }
             duelInvite.remove(p.getUniqueId());
@@ -724,7 +748,7 @@ public class LoginX extends JavaPlugin implements Listener {
             duelInviteLadder.remove(p.getUniqueId()); duelInviteOak.remove(p.getUniqueId());
             duelInviteStick.remove(p.getUniqueId()); duelInviteChest.remove(p.getUniqueId());
             String freeArena = findFreeDuelArena();
-            if (freeArena == null) { p.sendMessage(color("&#ff4444&l[DUEL] &cBoş arena kalmadı!")); return true; }
+            if (freeArena == null) { p.sendMessage(duelErr("Şu an boş arena yok.")); return true; }
             startDuel(inviter, p, freeArena, rules);
             return true;
         }
@@ -733,14 +757,14 @@ public class LoginX extends JavaPlugin implements Listener {
         if (cmdName.equals("1v1reddet")) {
             if (!(sender instanceof Player p)) return true;
             UUID inviterUid = duelInvite.remove(p.getUniqueId());
-            if (inviterUid == null) { p.sendMessage(color("&cBekleyen duel davetin yok.")); return true; }
+            if (inviterUid == null) { p.sendMessage(duelErr("Bekleyen duel davetin yok.")); return true; }
             cancelDuelInviteTimeout(p.getUniqueId());
             duelInviteWeb.remove(p.getUniqueId()); duelInviteEly.remove(p.getUniqueId());
             duelInviteLadder.remove(p.getUniqueId()); duelInviteOak.remove(p.getUniqueId());
             duelInviteStick.remove(p.getUniqueId()); duelInviteChest.remove(p.getUniqueId());
             Player inviter = Bukkit.getPlayer(inviterUid);
-            p.sendMessage(color("&#ff4444&l[DUEL] &fDaveti reddettiniz."));
-            if (inviter != null) inviter.sendMessage(color("&#ff4444&l[DUEL] &f" + p.getName() + " &7duel davetini reddetti."));
+            p.sendMessage(duel("Daveti reddettin."));
+            if (inviter != null) inviter.sendMessage(duel(hl(p.getName()) + " duel davetini reddetti."));
             return true;
         }
 
@@ -749,7 +773,7 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!(sender instanceof Player p)) return true;
             ItemStack wand = new ItemStack(Material.GOLDEN_AXE);
             ItemMeta wm = wand.getItemMeta();
-            wm.setDisplayName(color("&#ff6600&l⚔ &r&#ffcc00&l1v1 Wand &r&#ff6600&l⚔"));
+            wm.setDisplayName(color("&#ff6600&l&r&#ffcc00&l1v1 Wand &r&#ff6600&l"));
             List<String> wl = new ArrayList<>();
             wl.add(color("&#555555▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
             wl.add(color("  &7Sağ tık &f→ &bBirinci köşe"));
@@ -768,7 +792,7 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!(sender instanceof Player p)) return true;
             ItemStack wand = new ItemStack(Material.BLAZE_ROD);
             ItemMeta wm = wand.getItemMeta();
-            wm.setDisplayName(color("&#ff4400&l⚙ &r&#ffaa00&l1v1 Ayarla &r&#ff4400&l⚙"));
+            wm.setDisplayName(color("&#ff4400&l&r&#ffaa00&l1v1 Ayarla &r&#ff4400&l"));
             List<String> wl = new ArrayList<>();
             wl.add(color("&#553300▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
             wl.add(color("  &7Sağ tık &f→ &bBirinci köşeyi seç"));
@@ -789,62 +813,49 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // /bakimaa — op'suz herkesi atar, bakım modunu açar
         if (cmdName.equals("bakimaa")) {
-            if (!(sender instanceof Player p)) { sender.sendMessage("[BAKIM] Oyuncu komutudur."); return true; }
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
+            if (!(sender instanceof Player p)) { sender.sendMessage("Bu komut yalnızca oyuncular tarafından kullanılabilir."); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(uiErr("Bakım", "Bu komutu kullanma yetkin yok.")); return true; }
             bakimModu = true;
             getConfig().set("bakim.aktif", true); saveConfig();
             // Op olmayan ve izinli olmayan herkesi at
             int atilan = 0;
             for (Player on : new ArrayList<>(Bukkit.getOnlinePlayers())) {
                 if (on.isOp() || on.hasPermission("loginx.admin") || bakimIzinli.contains(on.getUniqueId())) continue;
-                on.kickPlayer(color(
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                    "&#ffffff&l      ⚙  SUNUCU BAKIMDA  ⚙\n" +
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                    "\n" +
-                    "&#aaaaaa  Sunucumuz bakım ve güncelleme\n" +
-                    "&#aaaaaa  işlemleri için geçici olarak\n" +
-                    "&#aaaaaa  kapatılmıştır.\n" +
-                    "\n" +
-                    "&#ffcc00  ✦ &fBakım bitince tekrar\n" +
-                    "&#ffcc00  ✦ &fbağlanabilirsin.\n" +
-                    "\n" +
-                    "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                    "&#555555  Anlayışın için teşekkürler!"
-                ));
+                on.kickPlayer(maintenanceKickMessage());
                 atilan++;
             }
             for (Player on : Bukkit.getOnlinePlayers())
                 if (on.hasPermission("loginx.admin"))
-                    on.sendMessage(color("&#ffcc00&l[BAKIM] &fBakım modu &aACTIF &7— " + atilan + " oyuncu atıldı."));
+                    { on.sendMessage(uiMsg("Bakım", "Bakım modu açıldı. " + hl(String.valueOf(atilan)) + " oyuncu sunucudan çıkarıldı.")); on.playSound(on.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 0.8f); }
             return true;
         }
 
         // /bakimdancikar — bakım modunu kapat
         if (cmdName.equals("bakimdancikar")) {
-            if (!(sender instanceof Player p)) { sender.sendMessage("[BAKIM] Oyuncu komutudur."); return true; }
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
+            if (!(sender instanceof Player p)) { sender.sendMessage("Bu komut yalnızca oyuncular tarafından kullanılabilir."); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(uiErr("Bakım", "Bu komutu kullanma yetkin yok.")); return true; }
             bakimModu = false;
             bakimIzinli.clear();
             getConfig().set("bakim.aktif", false); saveConfig();
-            p.sendMessage(color("&#00ff88&l[BAKIM] &fBakım modu &cKAPATILDI&f. Sunucu herkese açık."));
+            p.sendMessage(uiMsg("Bakım", "Bakım modu kapatıldı. Sunucu herkese açık."));
+            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.8f, 1.2f);
             for (Player on : Bukkit.getOnlinePlayers())
                 if (on.hasPermission("loginx.admin") && !on.equals(p))
-                    on.sendMessage(color("&#00ff88&l[BAKIM] &f" + p.getName() + " &7bakımı kapattı."));
+                    { on.sendMessage(uiMsg("Bakım", hl(p.getName()) + " bakım modunu kapattı.")); on.playSound(on.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.8f, 1.2f); }
             return true;
         }
 
         // /bakimaoyuncual <isim> — bakımdayken belirli oyuncunun girmesine izin ver
         if (cmdName.equals("bakimaoyuncual")) {
-            if (!(sender instanceof Player p)) { sender.sendMessage("[BAKIM] Oyuncu komutudur."); return true; }
-            if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /bakimaoyuncual <oyuncu>")); return true; }
+            if (!(sender instanceof Player p)) { sender.sendMessage("Bu komut yalnızca oyuncular tarafından kullanılabilir."); return true; }
+            if (!p.hasPermission("loginx.admin")) { p.sendMessage(uiErr("Bakım", "Bu komutu kullanma yetkin yok.")); return true; }
+            if (args.length < 1) { p.sendMessage(uiErr("Bakım", "Kullanım: /bakimaoyuncual <oyuncu>")); return true; }
             // Çevrimiçiyse UUID al, değilse OfflinePlayer
             Player target = Bukkit.getPlayer(args[0]);
             UUID targetUid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[0]).getUniqueId();
             bakimIzinli.add(targetUid);
-            p.sendMessage(color("&#00ff88&l[BAKIM] &f" + args[0] + " &7bakımdayken girebilir."));
-            if (target != null) target.sendMessage(color("&#00ff88&l[BAKIM] &fBakım sırasında sunucuya girebilirsin."));
+            p.sendMessage(uiMsg("Bakım", hl(args[0]) + " bakım sırasında sunucuya girebilir."));
+            if (target != null) target.sendMessage(uiMsg("Bakım", "Bakım sırasında sunucuya girmene izin verildi."));
             return true;
         }
 
@@ -1000,12 +1011,12 @@ public class LoginX extends JavaPlugin implements Listener {
 
             // Title ve ses
             target.sendTitle(
-                color("&#ff0000&l⚠ HİLE KONTROLE ALINDI! ⚠"),
+                color("&#ff0000&lHİLE KONTROLE ALINDI!"),
                 color("&#ffcc00/itiraf &f&7, &e/anydesk &7veya &b/discord2 &7yaz"),
                 10, 120, 30);
             target.playSound(target.getLocation(), Sound.BLOCK_BELL_USE, 1f, 0.5f);
             target.playSound(target.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.2f);
-            target.sendMessage(color("&#ff0000&l⚠ &r&#ffcc00Hile Kontrole Alındın! &r&#aaaaaa&o/itiraf, /anydesk veya /discord2 komutlarından birini kullan."));
+            target.sendMessage(color("&#ff0000&l&r&#ffcc00Hile Kontrole Alındın! &r&#aaaaaa&o/itiraf, /anydesk veya /discord2 komutlarından birini kullan."));
 
             // Yetkililere bildir
             for (Player on : Bukkit.getOnlinePlayers()) {
@@ -1060,7 +1071,8 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             if (uid == null || !kontUntil.containsKey(uid)) { admin.sendMessage(color("&cBu oyuncu kontta değil: " + args[0])); return true; }
             releaseKont(uid, true);
-            admin.sendMessage(color("&#00ff88&l[KONT] &r&f" + args[0] + " &7kontten çıkarıldı, eşyaları iade edildi."));
+            admin.sendMessage(uiMsg("Kont", hl(args[0]) + " kontten çıkarıldı, eşyaları iade edildi."));
+            sendReleasedPlayerToHub(uid);
             return true;
         }
 
@@ -1078,8 +1090,8 @@ public class LoginX extends JavaPlugin implements Listener {
             target.teleport(kontYeri != null ? kontYeri : target.getLocation());
             target.setWalkSpeed(0f);
             target.setFlySpeed(0f);
-            target.sendTitle(color("&#ff0000&l⚠ DURDURULDUN!"), color("&#ffcc00Kaçmaya çalışma!"), 5, 60, 10);
-            target.sendMessage(color("&#ff0000&l⚠ &fHile kontrolünden kaçamazsın!"));
+            target.sendTitle(color("&#ff0000&lDURDURULDUN!"), color("&#ffcc00Kaçmaya çalışma!"), 5, 60, 10);
+            target.sendMessage(color("&#ff0000&l&fHile kontrolünden kaçamazsın!"));
             admin.sendMessage(color("&#00ff88&l[KONT] &r&f" + target.getName() + " &7durduruldu ve kont yerine ışınlandı."));
             return true;
         }
@@ -1260,7 +1272,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 ItemStack wand = createArenaWand();
                 p.getInventory().addItem(wand);
                 p.sendMessage(silveraPrefix() + "Arena Wand envanterine verildi.");
-                p.sendMessage(color("&#9aa5b5▸ &fSağ tık &#9aa5b5= 1. nokta &7 | &fSol tık &#9aa5b5= 2. nokta &7(bölgeyi tamamlar)"));
+                p.sendMessage(color("&#9aa5b5&fSağ tık &#9aa5b5= 1. nokta &7 | &fSol tık &#9aa5b5= 2. nokta &7(bölgeyi tamamlar)"));
                 p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.6f);
             }
             case "iade"            -> openIadeMenu(p);
@@ -1328,7 +1340,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 if (pool == null || pool.isEmpty()) { p.sendMessage(color("&cKasa bos ya da bulunamadi.")); return true; }
                 List<Float> chs = crateChances.getOrDefault(ad, new ArrayList<>());
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#ffcc00&l  ✦ " + capitalize(ad) + " Kasası İçeriği &8(" + pool.size() + " eşya)"));
+                p.sendMessage(color("&#ffcc00&l  " + capitalize(ad) + " Kasası İçeriği &8(" + pool.size() + " eşya)"));
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 for (int i = 0; i < pool.size(); i++) {
                     String iName = getName(pool.get(i));
@@ -1355,7 +1367,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 chs.set(sira, chance); crateChances.put(ad, chs);
                 String[] clrS = getCrateColors(ad);
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#00ff88&l  ✔ Şans Güncellendi!"));
+                p.sendMessage(color("&#00ff88&l  Şans Güncellendi!"));
                 p.sendMessage(color("  &7Kasa: " + clrS[0] + capitalize(ad)));
                 p.sendMessage(color("  &7Eşya: &f" + getName(pool.get(sira))));
                 p.sendMessage(color("  &7Çıkma Şansı: &b%" + chance + " &8│ " + getRarityName(chance)));
@@ -1379,17 +1391,17 @@ public class LoginX extends JavaPlugin implements Listener {
                     for (Player on : Bukkit.getOnlinePlayers()) {
                         on.getInventory().addItem(key.clone());
                         on.sendTitle(
-                            color(clr[0] + "&l✦ " + clr[1] + "&l" + keyName.toUpperCase() + " " + clr[2] + "&l✦"),
+                            color(clr[0] + "&l" + keyName.toUpperCase()),
                             color("&#ffffff&l» &r&#dddddd" + capitalize(kasaId) + " Kasası Anahtarı &r&#00ff88Envantere Eklendi &r&#ffffff«"),
                             5, 70, 15);
                         on.playSound(on.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.8f, 1.3f);
                         cnt++;
                     }
-                    p.sendMessage(color("&#00ff88&l✔ &r&f" + cnt + " oyuncuya &e" + keyName + " &fverildi."));
+                    p.sendMessage(color("&#00ff88&l&r&f" + cnt + " oyuncuya &e" + keyName + " &fverildi."));
                     // Sunucu geneli EVENT mesajı
                     for (Player on : Bukkit.getOnlinePlayers()) {
                         on.sendMessage(color(""));
-                        on.sendMessage(color("  &#ff6600&l★ &r&#ffcc00&lEVENT &r&#ff6600&l★"));
+                        on.sendMessage(color("  &#ff6600&l&r&#ffcc00&lEVENT &r&#ff6600&l"));
                         on.sendMessage(color("  &#ffffff&lTüm oyunculara &r" + clr[0] + "&l" + keyName + " &r&#ffffff&lverildi!"));
                         on.sendMessage(color("  &#aaaaaa&oKasanı aç, şansını dene!"));
                         on.sendMessage(color(""));
@@ -1399,15 +1411,15 @@ public class LoginX extends JavaPlugin implements Listener {
                     if (tgt == null) { p.sendMessage(color("&cOyuncu bulunamadi: " + args[0])); return true; }
                     tgt.getInventory().addItem(key.clone());
                     tgt.sendTitle(
-                        color(clr[0] + "&l✦ " + clr[1] + "&l" + keyName.toUpperCase() + " " + clr[2] + "&l✦"),
+                        color(clr[0] + "&l" + keyName.toUpperCase()),
                         color("&#ffffff&l» &r&#dddddd" + capitalize(kasaId) + " Kasası Anahtarı &r&#00ff88Envantere Eklendi &r&#ffffff«"),
                         5, 70, 15);
                     tgt.playSound(tgt.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.8f, 1.3f);
-                    p.sendMessage(color("&#00ff88&l✔ &r&f" + tgt.getName() + " &7oyuncusuna &e" + keyName + " &fverildi."));
+                    p.sendMessage(color("&#00ff88&l&r&f" + tgt.getName() + " &7oyuncusuna &e" + keyName + " &fverildi."));
                     // Sunucu geneli EVENT mesajı (kişiye özel)
                     for (Player on : Bukkit.getOnlinePlayers()) {
                         on.sendMessage(color(""));
-                        on.sendMessage(color("  &#ff6600&l★ &r&#ffcc00&lEVENT &r&#ff6600&l★"));
+                        on.sendMessage(color("  &#ff6600&l&r&#ffcc00&lEVENT &r&#ff6600&l"));
                         on.sendMessage(color("  &#ffcc00&l" + tgt.getName() + " &r&#ffffff&l" + clr[0] + "&l" + keyName + " &r&#ffffff&lkazandı!"));
                         on.sendMessage(color(""));
                     }
@@ -1434,7 +1446,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 getConfig().set("crateColors." + ad, String.join(",", parsed).replace("&", ""));
                 saveConfig();
                 spawnCrateHologram(ad); // hologram yeni renkle yenilensin
-                p.sendMessage(color("&#00ff88&l✔ &r&f" + capitalize(ad) + " &7kasasının rengi güncellendi. &8(" + parsed.length + " renk)"));
+                p.sendMessage(color("&#00ff88&l&r&f" + capitalize(ad) + " &7kasasının rengi güncellendi. &8(" + parsed.length + " renk)"));
             }
 
             case "kasafarkliefektler" -> openEffectSelectMenu(p, args.length > 0 ? args[0].toLowerCase() : "");
@@ -1456,11 +1468,7 @@ public class LoginX extends JavaPlugin implements Listener {
         List<Integer> ids = new ArrayList<>();
         String nameLine = buildHologramLine(crateName);
 
-        // Fotoğraftaki gibi: daha aşağıda, blok üzerinde yakın
-        double yOff = 1.6;
-        spawnTextStand(loc, yOff,        nameLine,                                       ids);
-        spawnTextStand(loc, yOff - 0.28, color("&#ffffff Açmak için sağ tıkla"),        ids);
-        spawnTextStand(loc, yOff - 0.56, color("&#dddddd Önizlemek için sol tıkla"),    ids);
+        spawnTextStand(loc, 1.6, nameLine, ids);
 
         crateHolograms.put(crateName, ids);
     }
@@ -1548,7 +1556,6 @@ public class LoginX extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         if (activeSessions.containsKey(p.getUniqueId())) return;
 
-        if (e.getAction() == Action.LEFT_CLICK_BLOCK) { openCratePreview(p, activeCrate); return; }
         if (e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
         ItemStack inHand = p.getInventory().getItemInMainHand();
@@ -1557,7 +1564,7 @@ public class LoginX extends JavaPlugin implements Listener {
             p.setVelocity(p.getLocation().getDirection().multiply(-1.3).setY(0.5));
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 0.5f);
             p.getWorld().spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0.5,1,0.5), 6, 0.15, 0.15, 0.15, 0.02);
-            p.sendTitle(color("&#ff2200&l✖ ANAHTAR GEREKLİ ✖"), color("&#ff8866Bu kasayi acmak icin bir anahtara ihtiyacin var"), 5, 50, 10);
+            p.sendTitle(color(UI_BAD + "Anahtar Gerekli"), color(UI_SUB + "Bu kasayı açmak için anahtar gerekiyor."), 5, 50, 10);
             return;
         }
 
@@ -1568,15 +1575,16 @@ public class LoginX extends JavaPlugin implements Listener {
             wrongKeyCooldown.put(uid, now + WRONG_KEY_COOLDOWN_MS);
             p.setVelocity(p.getLocation().getDirection().multiply(-1.3).setY(0.35));
             p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
-            p.sendTitle(color("&#ffcc00&lYANLIS ANAHTAR!"), color("&#ffff66Bu anahtar bu kasayi acamaz."), 5, 40, 10);
+            p.sendTitle(color(UI_WARN + "Yanlış Anahtar"), color(UI_SUB + "Bu anahtar bu kasayı açamaz."), 5, 40, 10);
             return;
         }
 
         List<ItemStack> pool = crateItems.getOrDefault(activeCrate, new ArrayList<>());
-        if (pool.isEmpty()) { p.sendMessage(color("&cBu kasa henuz bos!")); return; }
+        if (pool.isEmpty()) { p.sendMessage(color(UI_BAD + "Bu kasa henüz boş.")); return; }
 
+        int rewardIdx = pickRewardIndex(activeCrate, pool);
         inHand.setAmount(inHand.getAmount() - 1);
-        openSpinMenu(p, activeCrate, pool, pickReward(activeCrate, pool));
+        openSpinMenu(p, activeCrate, pool, pool.get(rewardIdx).clone(), crateChanceOf(activeCrate, rewardIdx));
     }
 
     // ─────────────────────────────────────────────
@@ -1637,7 +1645,7 @@ public class LoginX extends JavaPlugin implements Listener {
         lore.add(color("&#6fa8dc Sağ Tık &#5a5a6a» &#c7d3e01. nokta seç"));
         lore.add(color("&#6fa8dc Sol Tık  &#5a5a6a» &#c7d3e02. nokta seç ve bölgeyi tamamla"));
         lore.add(color(""));
-        lore.add(color("&#9aa5b5▸ Bu bölgede oyuncular elytra açamaz"));
+        lore.add(color("&#9aa5b5Bu bölgede oyuncular elytra açamaz"));
         lore.add(color("&#4a4a5a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         im.setLore(lore);
         im.getPersistentDataContainer().set(arenaWandTag, PersistentDataType.BYTE, (byte) 1);
@@ -1773,10 +1781,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 // İlk oyuncu
                 queue[0] = p.getUniqueId();
                 playerAyarlaArena.put(p.getUniqueId(), arenaId);
-                p.sendMessage(color(""));
-                p.sendMessage(color("  " + duelFlop("⚔ ARENAYA GİRDİNİZ!", true)));
-                p.sendMessage(color("  &#aaaaaa&o2. oyuncu bekleniyor..."));
-                p.sendMessage(color(""));
+                p.sendMessage(duel("Arenaya girdin. İkinci oyuncu bekleniyor."));
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
             } else if (queue[1] == null && !queue[0].equals(p.getUniqueId())) {
                 // İkinci oyuncu — aynı oyuncu tekrar girmesin
@@ -1786,10 +1791,7 @@ public class LoginX extends JavaPlugin implements Listener {
                     // İlk oyuncu ayrılmış, slotu yenile
                     queue[0] = p.getUniqueId();
                     playerAyarlaArena.put(p.getUniqueId(), arenaId);
-                    p.sendMessage(color(""));
-                    p.sendMessage(color("  " + duelFlop("⚔ ARENAYA GİRDİNİZ!", true)));
-                    p.sendMessage(color("  &#aaaaaa&o2. oyuncu bekleniyor..."));
-                    p.sendMessage(color(""));
+                    p.sendMessage(duel("Arenaya girdin. İkinci oyuncu bekleniyor."));
                     p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
                     return;
                 }
@@ -1803,12 +1805,9 @@ public class LoginX extends JavaPlugin implements Listener {
                 for (UUID uid : queue) {
                     Player ap = Bukkit.getPlayer(uid);
                     if (ap != null) {
-                        ap.sendMessage(color(""));
-                        ap.sendMessage(color("  " + duelFlop("⚔ 1v1 BAŞLADI!", true) + " &r&#aaaaaa&oİyi şanslar."));
-                        ap.sendMessage(color("  &#aaaaaa&o⚠ Oyundan çıkarsan eşyaların shulker'da düşer!"));
-                        ap.sendMessage(color(""));
-                        ap.sendTitle(duelFlop("⚔ 1v1 BAŞLADI ⚔", true), color("&#aaaaaa&oİyi şanslar!"), 5, 60, 15);
-                        ap.playSound(ap.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.5f);
+                        ap.sendMessage(duel("1v1 başladı. Oyundan çıkarsan maçı kaybedersin."));
+                        ap.sendTitle(duelFlop("1v1", true), color(UI_SUB + "İyi şanslar"), 5, 60, 15);
+                        ap.playSound(ap.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.8f);
                     }
                 }
 
@@ -1829,10 +1828,10 @@ public class LoginX extends JavaPlugin implements Listener {
                             Player tp = Bukkit.getPlayer(uid2);
                             if (tp != null && tp.isOnline()) {
                                 tp.sendTitle(
-                                    duelFlop("⏰ SÜRE DOLDU!", true),
-                                    color("&#aaaaaa&o10 dakika içinde bitirilemedi, ışınlanıyorsun..."),
+                                    duelFlop("Süre doldu", true),
+                                    color(UI_SUB + "10 dakikada bitmedi, spawn noktasına ışınlanıyorsun."),
                                     5, 60, 15);
-                                tp.sendMessage(color("  " + duelFlop("⏰ 1v1 ROOM 10 DAKİKA SINIRINA ULAŞTI!", true)));
+                                tp.sendMessage(duel("1v1 odası 10 dakika sınırına ulaştı. Maç berabere sayıldı."));
                                 tp.playSound(tp.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 1f);
                                 teleportToSpawn(tp);
                             }
@@ -1974,8 +1973,8 @@ public class LoginX extends JavaPlugin implements Listener {
                     Player ap = Bukkit.getPlayer(uid);
                     if (ap != null) {
                         ap.sendTitle(
-                            color("&#ff4444&l⚔ 1v1 BİTTİ ⚔"),
-                            color("&#ffcc00" + dead.getName() + " &felendi!"),
+                            color(UI_TEXT + "1v1 bitti"),
+                            color(UI_SUB + dead.getName() + " elendi"),
                             5, 60, 15);
                         ap.playSound(ap.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
                     }
@@ -2017,15 +2016,9 @@ public class LoginX extends JavaPlugin implements Listener {
 
             // Kazanana title
             if (finalWinner != null && finalWinner.isOnline()) {
-                finalWinner.sendTitle(
-                    duelFlop("1v1 KAZANDIN!", true),
-                    color("&#ff4444" + dead.getName() + " &felendi!"),
-                    5, 60, 15);
-                finalWinner.playSound(finalWinner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
-                finalWinner.sendMessage(color(""));
-                finalWinner.sendMessage(color("  " + duelFlop("1v1 KAZANDIN!", true)));
-                finalWinner.sendMessage(color("  &#aaaaaa&o" + dead.getName() + " elendin!"));
-                finalWinner.sendMessage(color(""));
+                finalWinner.sendTitle(duelFlop("Kazandın", true), color(UI_SUB + dead.getName() + " elendi"), 5, 60, 15);
+                finalWinner.playSound(finalWinner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.8f, 1f);
+                finalWinner.sendMessage(duel("1v1 kazandın. " + hl(dead.getName()) + " elendi."));
             }
 
             // Camları kaldır + 6'dan geriye sayım
@@ -2041,8 +2034,8 @@ public class LoginX extends JavaPlugin implements Listener {
                             // Geri sayımı kazanana göster
                             if (finalWinner != null && finalWinner.isOnline()) {
                                 finalWinner.sendTitle(
-                                    duelFlop("⌛ " + sec + " saniye", true),
-                                    color("&#aaaaaa&oCamlar açılıyor..."),
+                                    duelFlop(sec + " saniye", true),
+                                    color(UI_SUB + "Arena camları açılıyor"),
                                     0, 25, 5);
                                 finalWinner.playSound(finalWinner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.2f);
                             }
@@ -2057,10 +2050,10 @@ public class LoginX extends JavaPlugin implements Listener {
 
                             if (finalWinner != null && finalWinner.isOnline()) {
                                 finalWinner.sendTitle(
-                                    duelFlop("✦ ARENA AÇILDI ✦", true),
-                                    color("&#aaaaaa&oYeni oyuncular girebilir"),
+                                    duelFlop("Arena açıldı", true),
+                                    color(UI_SUB + "Yeni oyuncular girebilir"),
                                     5, 50, 15);
-                                finalWinner.sendMessage(color("  " + duelFlop("✦ Arena camları açıldı! Yeni oyuncular girebilir.", true)));
+                                finalWinner.sendMessage(duel("Arena camları açıldı. Yeni oyuncular girebilir."));
                                 finalWinner.playSound(finalWinner.getLocation(), Sound.BLOCK_GLASS_BREAK, 1f, 1.2f);
                                 // Kazanan da spawna ışınlansın — eskiden burada ışınlanmıyordu
                                 teleportToSpawn(finalWinner);
@@ -2190,7 +2183,7 @@ public class LoginX extends JavaPlugin implements Listener {
             long lastWarn = wrongKeyCooldown.getOrDefault(p.getUniqueId(), 0L);
             if (lastWarn + 5000L < now) {
                 wrongKeyCooldown.put(p.getUniqueId(), now);
-                p.sendTitle(color("&#ff4444&l⚠ Koruma Aktif"), color("&#ffcc00Koruma altındayken eşya alamazsın!"), 5, 40, 10);
+                p.sendTitle(color("&#ff4444&lKoruma Aktif"), color("&#ffcc00Koruma altındayken eşya alamazsın!"), 5, 40, 10);
             }
         }
     }
@@ -2205,9 +2198,9 @@ public class LoginX extends JavaPlugin implements Listener {
             long lastWarn = wrongKeyCooldown.getOrDefault(p.getUniqueId(), 0L);
             if (lastWarn + 5000L < now) {
                 wrongKeyCooldown.put(p.getUniqueId(), now);
-                p.sendTitle(color("&#ff4444&l⚠ Koruma Aktif"), color("&#ffcc00Koruma altındayken portallardan geçemezsin!"), 5, 40, 10);
+                p.sendTitle(color("&#ff4444&lKoruma Aktif"), color("&#ffcc00Koruma altındayken portallardan geçemezsin!"), 5, 40, 10);
             }
-            p.sendActionBar(color("&#ff4444✖ &fKoruma altındayken portallardan geçemezsin!"));
+            p.sendActionBar(color("&#ff4444&fKoruma altındayken portallardan geçemezsin!"));
         }
     }
 
@@ -2223,7 +2216,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 || cause == PlayerTeleportEvent.TeleportCause.END_PORTAL
                 || cause == PlayerTeleportEvent.TeleportCause.END_GATEWAY) {
             ev.setCancelled(true);
-            p.sendActionBar(color("&#ff4444✖ &fKoruma altındayken portallardan geçemezsin!"));
+            p.sendActionBar(color("&#ff4444&fKoruma altındayken portallardan geçemezsin!"));
         }
     }
 
@@ -2255,9 +2248,9 @@ public class LoginX extends JavaPlugin implements Listener {
             long lastWarn = wrongKeyCooldown.getOrDefault(p.getUniqueId(), 0L);
             if (lastWarn + 5000L < now) {
                 wrongKeyCooldown.put(p.getUniqueId(), now);
-                p.sendTitle(color("&#ff4444&l⚠ Koruma Aktif"), color("&#ffcc00Koruma altındayken portallardan geçemezsin!"), 5, 40, 10);
+                p.sendTitle(color("&#ff4444&lKoruma Aktif"), color("&#ffcc00Koruma altındayken portallardan geçemezsin!"), 5, 40, 10);
             }
-            p.sendActionBar(color("&#ff4444✖ &fKoruma altındayken portallardan geçemezsin!"));
+            p.sendActionBar(color("&#ff4444&fKoruma altındayken portallardan geçemezsin!"));
         }
     }
 
@@ -2279,6 +2272,15 @@ public class LoginX extends JavaPlugin implements Listener {
         return false;
     }
 
+    /** Bakım modunda atılan veya giriş yapamayan oyunculara gösterilen ekran. Satırlar istemcide ortalanır. */
+    private String maintenanceKickMessage() {
+        return color(
+            UI_TEXT + "Sunucu bakımda\n" +
+            "\n" +
+            UI_SUB + "Bakım ve güncelleme çalışmaları sürüyor.\n" +
+            UI_SUB + "Tamamlandığında tekrar bağlanabilirsin.");
+    }
+
     // İlk giriş koruma + bakım kontrolü
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
@@ -2290,21 +2292,7 @@ public class LoginX extends JavaPlugin implements Listener {
             // 1 tick sonra at (join tamamlansın)
             new BukkitRunnable() {
                 @Override public void run() {
-                    p.kickPlayer(color(
-                        "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                        "&#ffffff&l      ⚙  SUNUCU BAKIMDA  ⚙\n" +
-                        "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                        "\n" +
-                        "&#aaaaaa  Sunucumuz şu an bakım ve\n" +
-                        "&#aaaaaa  güncelleme işlemleri için\n" +
-                        "&#aaaaaa  geçici olarak kapatılmıştır.\n" +
-                        "\n" +
-                        "&#ffcc00  ✦ &fBakım tamamlandığında\n" +
-                        "&#ffcc00  ✦ &ftekrar bağlanabilirsin.\n" +
-                        "\n" +
-                        "&#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-                        "&#555555  Anlayışın için teşekkürler!"
-                    ));
+                    p.kickPlayer(maintenanceKickMessage());
                 }
             }.runTaskLater(this, 1L);
             return;
@@ -2315,22 +2303,10 @@ public class LoginX extends JavaPlugin implements Listener {
             new BukkitRunnable() {
                 @Override public void run() {
                     if (!p.isOnline()) return;
-                    p.sendTitle(
-                        color("&#ffcc00&l⚙ BAKIM MODU ⚙"),
-                        color("&#aaaaaa&oSunucu şu an bakımdadır"),
-                        5, 100, 20);
-                    p.sendMessage(color(""));
-                    p.sendMessage(color("  &#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                    p.sendMessage(color("  &#ffcc00&l⚙ &r&#ffffff&lSUNUCU BAKIM MODU &r&#ffcc00&l⚙"));
-                    p.sendMessage(color("  &#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                    p.sendMessage(color("  &#aaaaaa Sunucu şu an bakım modundadır."));
-                    p.sendMessage(color("  &#aaaaaa Yalnızca yetkili ve izinli oyuncular"));
-                    p.sendMessage(color("  &#aaaaaa şu an sunucuya bağlanabilir."));
-                    p.sendMessage(color(""));
-                    p.sendMessage(color("  &#00ff88» &e/bakimdancikar &fkomutu ile bakımı kapatabilirsin."));
-                    p.sendMessage(color("  &#00ff88» &e/bakimaoyuncual &f<oyuncu> ile oyuncuya izin verebilirsin."));
-                    p.sendMessage(color("  &#0099ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                    p.sendMessage(color(""));
+                    p.sendTitle(color(UI_TEXT + "Bakım Modu"), color(UI_SUB + "Sunucu şu an bakımda"), 5, 100, 20);
+                    p.sendMessage(uiMsg("Bakım", "Bakım modu açık. Yalnızca yetkililer ve izin verilen oyuncular girebilir."));
+                    p.sendMessage(uiMsg("Bakım", "Kapatmak için " + hl("/bakimdancikar") + ", oyuncu eklemek için " + hl("/bakimaoyuncual <oyuncu>") + " kullan."));
+                    p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.6f, 1.0f);
                 }
             }.runTaskLater(this, 20L);
         }
@@ -2350,7 +2326,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 @Override public void run() {
                     if (!p.isOnline()) return;
                     p.sendTitle(
-                        color("&#00ccff&l✦ KORUMA AKTİF ✦"),
+                        color("&#00ccff&lKORUMA AKTİF"),
                         color("&#ffffff25 Dakika boyunca koruma altındasın"),
                         5, 80, 20);
                     p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BELL, 1f, 1.5f);
@@ -2372,10 +2348,10 @@ public class LoginX extends JavaPlugin implements Listener {
             long dak  = (kalan % 3_600_000L) / 60_000L;
             long sn   = (kalan % 60_000L) / 1_000L;
             String timeStr = (saat > 0 ? saat + "s " : "") + (dak > 0 ? dak + "d " : "") + sn + "sn";
-            p.sendActionBar(color("&#00ccff⛨ Koruma: &f" + timeStr + " &8| &7/korumakapat ile kapat"));
+            p.sendActionBar(color("&#00ccffKoruma: &f" + timeStr + " &8| &7/korumakapat ile kapat"));
             // Süre bittiyse bildir
             if (kalan < 5000L && kalan > 0L) {
-                p.sendTitle(color("&#ff4444&l⚠ Koruma Bitiyor!"), color("&#ffcc00Artık savunmasız olacaksın"), 3, 30, 10);
+                p.sendTitle(color("&#ff4444&lKoruma Bitiyor!"), color("&#ffcc00Artık savunmasız olacaksın"), 3, 30, 10);
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 0.7f);
             }
         }
@@ -2385,12 +2361,12 @@ public class LoginX extends JavaPlugin implements Listener {
     //  KUMAR MENÜSÜ AYARLARI
     // ─────────────────────────────────────────────
     private void openKumarMenuSettings(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, color("&#ffcc00&l⚙ Kumar Menüsü Ayarları"));
+        Inventory inv = Bukkit.createInventory(null, 54, color("&#ffcc00&lKumar Menüsü Ayarları"));
         ItemStack fill = makeBorderGlass("&#0f0f1e");
         for (int i = 0; i < 54; i++) inv.setItem(i, fill);
 
         ItemStack title = new ItemStack(Material.NETHER_STAR); ItemMeta tm = title.getItemMeta();
-        tm.setDisplayName(color("&#ffcc00&l✦ Kumar Hızı Seç ✦"));
+        tm.setDisplayName(color("&#ffcc00&lKumar Hızı Seç"));
         List<String> tl = new ArrayList<>();
         tl.add(color("  &#555577▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         tl.add(color("  &#ffffff&lKasayı açtığında animasyonun"));
@@ -2401,16 +2377,15 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // SİMETRİK: 7 buton — 4 üst + 3 alt, ortada
         String[][] opts = {
-            {"1 Saniye","20","Cok Hızlı ⚡","&#00ff88","LIME_STAINED_GLASS_PANE"},
-            {"2 Saniye","40","Standart ✦","&#00ccff","CYAN_STAINED_GLASS_PANE"},
-            {"3 Saniye","60","Orta ●","&#4488ff","BLUE_STAINED_GLASS_PANE"},
-            {"4 Saniye","80","Uzun ★","&#aa44ff","PURPLE_STAINED_GLASS_PANE"},
-            {"5 Saniye","100","Epey Uzun ◆","&#ff44ff","MAGENTA_STAINED_GLASS_PANE"},
-            {"6 Saniye","120","Çok Uzun ☆","&#ff8800","ORANGE_STAINED_GLASS_PANE"},
-            {"7 Saniye","140","Maksimum ♦","&#ff3333","RED_STAINED_GLASS_PANE"}};
+            {"1 Saniye","20","Çok Hızlı","&#00ff88","LIME_STAINED_GLASS_PANE"},
+            {"2 Saniye","40","Standart","&#00ccff","CYAN_STAINED_GLASS_PANE"},
+            {"3 Saniye","60","Orta","&#4488ff","BLUE_STAINED_GLASS_PANE"},
+            {"4 Saniye","80","Uzun","&#aa44ff","PURPLE_STAINED_GLASS_PANE"},
+            {"5 Saniye","100","Epey Uzun","&#ff44ff","MAGENTA_STAINED_GLASS_PANE"},
+            {"6 Saniye","120","Çok Uzun","&#ff8800","ORANGE_STAINED_GLASS_PANE"},
+            {"7 Saniye","140","Maksimum","&#ff3333","RED_STAINED_GLASS_PANE"}};
         // Simetrik: 19,21,23,25 (üst 4) + 29,31,33 (alt 3)
         int[] slots = {19, 21, 23, 25, 29, 31, 33};
-        String[] stars = {"★★★★★★★","★★★★★★☆","★★★★★☆☆","★★★★☆☆☆","★★★☆☆☆☆","★★☆☆☆☆☆","★☆☆☆☆☆☆"};
 
         for (int i = 0; i < 7; i++) {
             Material mat = Material.matchMaterial(opts[i][4]);
@@ -2422,8 +2397,7 @@ public class LoginX extends JavaPlugin implements Listener {
             l.add(color("  &#ffffff&l" + opts[i][2]));
             l.add(color(""));
             l.add(color("  &7Süre:  " + opts[i][3] + "&l" + opts[i][0]));
-            l.add(color("  &7Hız:   &#ffffff" + stars[i]));
-            l.add(color("  &7Durum: &#aaaaaa" + (i == 1 ? "&#00ff88✔ Varsayılan" : "Pasif")));
+            l.add(color("  &7Durum: &#aaaaaa" + (i == 1 ? "&#00ff88Varsayılan" : "Pasif")));
             l.add(color(""));
             l.add(color("  " + opts[i][3] + "» &fTüm kasalara uygulanır"));
             l.add(color("  " + opts[i][3] + "» Seçmek için tıkla!"));
@@ -2499,12 +2473,12 @@ public class LoginX extends JavaPlugin implements Listener {
         if (page >= totalPages) page = totalPages - 1;
         if (page < 0) page = 0;
 
-        Inventory inv = Bukkit.createInventory(null, 54, color("&#aa44ff&l✦ Efekt Secimi"));
+        Inventory inv = Bukkit.createInventory(null, 54, color("&#aa44ff&lEfekt Secimi"));
         ItemStack fill = makeBorderGlass("&#0d0d1a");
         for (int i = 0; i < 54; i++) inv.setItem(i, fill);
 
         ItemStack header = new ItemStack(Material.AMETHYST_SHARD); ItemMeta hm = header.getItemMeta();
-        hm.setDisplayName(color("&#aa44ff&l✦ Efekt Seç &8(" + ALL_EFFECTS.length + " efekt)"));
+        hm.setDisplayName(color("&#aa44ff&lEfekt Seç &8(" + ALL_EFFECTS.length + " efekt)"));
         List<String> hl = new ArrayList<>();
         hl.add(color("  &#553388▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         hl.add(color("  &#ffffff&lKasa etrafında görünecek efekti seç"));
@@ -2515,7 +2489,6 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // 4 satır: 10-16, 19-25, 28-34, 37-43
         int[] slots2 = {10,11,12,13,14,15,16, 19,20,21,22,23,24,25, 28,29,30,31,32,33,34, 37,38,39,40,41,42,43};
-        String[] icons = {"◎","✿","◈","★","◆","♦","❄","☽","◉","◌","✦","⚡","✾","☁","◍","⊛","⊕","⊗","⊞","⊡","⊠","⊟","⊝","⊜","⊙","⊚","◐","◑"};
 
         int start = page * perPage;
         for (int i = 0; i < perPage && (start + i) < ALL_EFFECTS.length; i++) {
@@ -2526,8 +2499,7 @@ public class LoginX extends JavaPlugin implements Listener {
             String desc  = (String)   ALL_EFFECTS[idx][3];
             Material mat = (Material) ALL_EFFECTS[idx][4];
             ItemStack btn = new ItemStack(mat); ItemMeta bm = btn.getItemMeta();
-            String icon = icons[i % icons.length];
-            bm.setDisplayName(color(clr2 + icon + " " + label));
+            bm.setDisplayName(color(clr2 + label));
             List<String> l = new ArrayList<>();
             l.add(color("  " + clr2 + "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
             l.add(color("  &7" + desc));
@@ -2542,7 +2514,7 @@ public class LoginX extends JavaPlugin implements Listener {
         // Önceki sayfa — slot 45
         if (page > 0) {
             ItemStack prev = new ItemStack(Material.SPECTRAL_ARROW); ItemMeta pm = prev.getItemMeta();
-            pm.setDisplayName(color("&#ffcc00&l← Önceki Sayfa"));
+            pm.setDisplayName(color("&#ffcc00&lÖnceki Sayfa"));
             pm.setLore(Arrays.asList(color("&8EFEKTSAYFA:" + (page-1) + "|KASA:" + preKasa)));
             prev.setItemMeta(pm); inv.setItem(45, prev);
         }
@@ -2553,7 +2525,7 @@ public class LoginX extends JavaPlugin implements Listener {
         // Sonraki sayfa — slot 53
         if (page < totalPages - 1) {
             ItemStack next = new ItemStack(Material.ARROW); ItemMeta nm = next.getItemMeta();
-            nm.setDisplayName(color("&#ffcc00&l→ Sonraki Sayfa"));
+            nm.setDisplayName(color("&#ffcc00&lSonraki Sayfa"));
             nm.setLore(Arrays.asList(color("&8EFEKTSAYFA:" + (page+1) + "|KASA:" + preKasa)));
             next.setItemMeta(nm); inv.setItem(53, next);
         }
@@ -3081,7 +3053,7 @@ public class LoginX extends JavaPlugin implements Listener {
         inv.setItem(13, createKey(Material.ORANGE_CANDLE, "gear"));
         inv.setItem(14, createKey(Material.LIME_CANDLE,   "booster"));
         inv.setItem(15, createKey(Material.PURPLE_CANDLE, "all"));
-        inv.setItem(22, createBtn(Material.EXPERIENCE_BOTTLE, "&#ffcc00&l✦ Seviye 8 Kasası ✦"));
+        inv.setItem(22, createBtn(Material.EXPERIENCE_BOTTLE, "&#ffcc00&lSeviye 8 Kasası"));
         inv.setItem(31, makeCloseHead(p));
         p.openInventory(inv);
     }
@@ -3115,21 +3087,26 @@ public class LoginX extends JavaPlugin implements Listener {
     // ─────────────────────────────────────────────
     //  KUMAR MENÜSÜ — AÇILIŞ (ses iyileştirildi)
     // ─────────────────────────────────────────────
-    private ItemStack pickReward(String crateName, List<ItemStack> pool) {
-        List<Float> chs = crateChances.getOrDefault(crateName, new ArrayList<>());
+    private int pickRewardIndex(String crateName, List<ItemStack> pool) {
         float total = 0f; List<Float> weights = new ArrayList<>();
-        for (int i = 0; i < pool.size(); i++) { float w = (i < chs.size()) ? chs.get(i) : 10f; weights.add(w); total += w; }
+        for (int i = 0; i < pool.size(); i++) { float w = crateChanceOf(crateName, i); weights.add(w); total += w; }
         float roll = new Random().nextFloat() * total, cumul = 0f;
-        for (int i = 0; i < pool.size(); i++) { cumul += weights.get(i); if (roll <= cumul) return pool.get(i).clone(); }
-        return pool.get(pool.size()-1).clone();
+        for (int i = 0; i < pool.size(); i++) { cumul += weights.get(i); if (roll <= cumul) return i; }
+        return pool.size() - 1;
     }
 
-    private void openSpinMenu(Player p, String crateName, List<ItemStack> pool, ItemStack reward) {
-        String title = color(getBoldColorTitle(crateName, capitalize(crateName) + " Kasasi"));
+    /** Ödülün listede görünen çıkma şansı; ayarlanmamışsa varsayılan 10. */
+    private float crateChanceOf(String crateName, int idx) {
+        List<Float> chs = crateChances.getOrDefault(crateName, new ArrayList<>());
+        return (idx >= 0 && idx < chs.size()) ? chs.get(idx) : 10f;
+    }
+
+    private void openSpinMenu(Player p, String crateName, List<ItemStack> pool, ItemStack reward, float chance) {
+        String title = color(getBoldColorTitle(crateName, capitalize(crateName) + " Kasası"));
         Inventory inv = Bukkit.createInventory(null, SPIN_SLOTS, title);
         fillSpinInventory(inv, pool, crateName);
         int dur = crateSpinDuration.getOrDefault(crateName, DEFAULT_SPIN_TICKS);
-        activeSessions.put(p.getUniqueId(), new CrateSession(inv, reward, crateName, dur));
+        activeSessions.put(p.getUniqueId(), new CrateSession(inv, reward, crateName, dur, chance));
         p.openInventory(inv);
         // Kumar menüsü açılış sesi — daha çarpıcı
         p.playSound(p.getLocation(), Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
@@ -3209,60 +3186,37 @@ public class LoginX extends JavaPlugin implements Listener {
         for (int sl : new int[]{13,21,23,31}) s.inv.setItem(sl, gold.clone());
         p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
         p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.5f);
-        p.playSound(p.getLocation(), Sound.ITEM_TOTEM_USE, 1f, 1.2f);
-        String rName = getName(s.reward);
-        String[] clr = getCrateColors(s.crateName);
-        p.sendTitle(color(clr[0] + "&l✦ " + capitalize(s.crateName) + " Kasasından ✦"),
-            color("&#ffffff&l" + rName + " &r&#ffcc00kazandın!"), 5, 100, 20);
+        p.sendMessage(crateWinMessage(s.chance, capitalize(s.crateName), getName(s.reward)));
         new BukkitRunnable() {
             @Override public void run() {
                 if (!p.isOnline()) return;
-                p.getInventory().addItem(s.reward.clone());
-                p.sendMessage(color(clr[0] + "&l★ &r&#ffffff" + rName + " &7envantere eklendi! &8[" + capitalize(s.crateName) + " Kasasi]"));
+                Map<Integer, ItemStack> leftover = p.getInventory().addItem(s.reward.clone());
+                for (ItemStack rem : leftover.values()) p.getWorld().dropItem(p.getLocation(), rem);
                 p.closeInventory(); activeSessions.remove(p.getUniqueId());
             }
         }.runTaskLater(this, 42L);
     }
 
-    // ─────────────────────────────────────────────
-    //  KASA ÖNİZLEME — Şans → Çıkma Şansı
-    // ─────────────────────────────────────────────
-    private void openCratePreview(Player p, String crateName) {
-        // Fotoğraftaki gibi: başlık sabit "&7Kasa Crate"
-        String title = color("&7Kasa Crate");
-        Inventory inv = Bukkit.createInventory(null, 45, title);
-        String[] clr = getCrateColors(crateName);
-        for (int i = 0; i < 45; i++)
-            if (i < 9 || i > 35 || i % 9 == 0 || i % 9 == 8) inv.setItem(i, makeBorderGlass(clr[i % clr.length]));
-
-        List<ItemStack> items   = crateItems.getOrDefault(crateName, new ArrayList<>());
-        List<Float>     chances = crateChances.getOrDefault(crateName, new ArrayList<>());
-        int slot = 10;
-        for (int idx = 0; idx < items.size(); idx++) {
-            if (slot % 9 == 8) slot += 2;
-            if (slot > 34) break;
-            ItemStack display = items.get(idx).clone();
-            ItemMeta  dm      = display.getItemMeta();
-            if (dm == null) { display.setItemMeta(Bukkit.getItemFactory().getItemMeta(display.getType())); dm = display.getItemMeta(); }
-            float ch = (idx < chances.size()) ? chances.get(idx) : 10.0f;
-            // Mevcut lore varsa koru, yoksa boş liste
-            List<String> l = dm.hasLore() ? new ArrayList<>(dm.getLore()) : new ArrayList<>();
-            l.add(color("&8▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-            l.add(color("&7• Çıkma Şansı: &f%" + ch));
-            l.add(color("&7• Nadirlik: " + getRarityName(ch)));
-            dm.setLore(l); display.setItemMeta(dm);
-            inv.setItem(slot++, display);
-        }
-        inv.setItem(40, makeCloseHead(p));
-        p.openInventory(inv);
+    /**
+     * Kazanılan itemin çıkma şansına göre tek satırlık kazanma mesajı.
+     * Eşikler: %100 ve üzeri, %50 ve üzeri, %30 ve üzeri, daha düşükler.
+     */
+    private String crateWinMessage(float chance, String crateName, String itemName) {
+        String lead, tone;
+        if (chance >= 100f)     { lead = "Şansını sikim!";   tone = "&#98a2b3"; }
+        else if (chance >= 50f) { lead = "Eh işte!";         tone = "&#d9a85b"; }
+        else if (chance >= 30f) { lead = "Yaklaştın ustam!"; tone = "&#7aa2d8"; }
+        else                    { lead = "Helal olsun usta!"; tone = "&#6fbf8f"; }
+        return color(tone + lead + " " + UI_TEXT + crateName + tone + " kasasından "
+            + UI_TEXT + itemName + tone + " kazandın.");
     }
 
     private ItemStack makeCloseHead(Player p) {
         ItemStack head = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta sm = (SkullMeta) head.getItemMeta();
         sm.setOwningPlayer(p);
-        sm.setDisplayName(color("&#ff3333&lKapat"));
-        sm.setLore(Collections.singletonList(color("&7Onizlemeyi kapatmak icin tikla.")));
+        sm.setDisplayName(color(UI_BAD + "Kapat"));
+        sm.setLore(Collections.singletonList(color(UI_SUB + "Menüyü kapatmak için tıkla.")));
         head.setItemMeta(sm); return head;
     }
 
@@ -3270,41 +3224,39 @@ public class LoginX extends JavaPlugin implements Listener {
     //  BİLGİ MENÜSÜ
     // ─────────────────────────────────────────────
     private void openInfoMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, color("&#00ccff&l✦ LoginX Bilgi Merkezi ✦"));
+        Inventory inv = Bukkit.createInventory(null, 54, color("&#00ccff&lLoginX Bilgi Merkezi"));
         ItemStack fill = makeBorderGlass("&#050520");
         for (int i = 0; i < 54; i++) inv.setItem(i, fill);
 
         ItemStack info = new ItemStack(Material.NETHER_STAR); ItemMeta im = info.getItemMeta();
-        im.setDisplayName(color("&#ffcc00&l✦ &r&#fff44f&l Fear Craft LoginX &r&#ffcc00&l✦"));
+        im.setDisplayName(color("&#ffcc00&l&r&#fff44f&l Fear Craft LoginX &r&#ffcc00&l"));
         List<String> il = new ArrayList<>();
         il.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         il.add(color(""));
-        il.add(color("    &#ffffff&l✦ Kasa & Anahtar Sistemi ✦"));
+        il.add(color("    &#ffffff&lKasa & Anahtar Sistemi"));
         il.add(color("    &#aaaaaa&oFear Craft için geliştirilmiştir"));
         il.add(color(""));
         il.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        il.add(color("  &#00ff88◆ &fKasaları &b&lsağ tıkla &file aç"));
-        il.add(color("  &#00ff88◆ &fKasaları &b&lsol tıkla &fönizle"));
-        il.add(color("  &#00ff88◆ &fHer kasanın kendine özel anahtarı var"));
-        il.add(color("  &#00ff88◆ &f&lKey All &rherhangi bir kasayı açar"));
-        il.add(color("  &#00ff88◆ &fŞans ayarla: &e/kasasansayarla"));
-        il.add(color("  &#00ff88◆ &fAnahtar ver: &e/kasakeyver"));
-        il.add(color("  &#00ff88◆ &fEfekt seç: &e/kasafarkliefektler"));
+        il.add(color("  &#00ff88&fHer kasanın kendine özel anahtarı var"));
+        il.add(color("  &#00ff88&f&lKey All &rherhangi bir kasayı açar"));
+        il.add(color("  &#00ff88&fŞans ayarla: &e/kasasansayarla"));
+        il.add(color("  &#00ff88&fAnahtar ver: &e/kasakeyver"));
+        il.add(color("  &#00ff88&fEfekt seç: &e/kasafarkliefektler"));
         il.add(color(""));
         il.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        il.add(color("    &#ffcc00● &7Toplam Kasa: &f" + crates.size()));
+        il.add(color("    &#ffcc00&7Toplam Kasa: &f" + crates.size()));
         il.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         im.setLore(il); info.setItemMeta(im); inv.setItem(4, info);
 
         // SİMETRİK düzen: 7 buton — 29,30,31,32,33 + 20,24
         Object[][] sections = {
-            {"&#ff6600","&#ff8833","◈ KASALAR","Sunucudaki tüm kasalar\nhakkında detaylı bilgi al.\nKasa sayısı, itemler ve efektler.",Material.CHEST,"KASALAR"},
-            {"&#00ccff","&#44ddff","◈ ANAHTARLAR","Hangi anahtar hangi kasayı\naçar öğren ve envantere al.\nKey All herkesi açar!",Material.TRIPWIRE_HOOK,"ANAHTARLAR"},
-            {"&#aa44ff","&#cc77ff","◈ EFEKTLER","Kasalardaki partikül efektlerini\ngörüntüle ve değiştir.\n7 farklı efekt seçeneği.",Material.FIREWORK_ROCKET,"EFX"},
-            {"&#ffdd00","&#ffee44","◈ ŞANS","Her item için şans oranlarını\ngörüntüle ve düzenle.\nNadirlik sistemi açıklaması.",Material.GOLDEN_APPLE,"SANS"},
-            {"&#ff2244","&#ff5566","◈ KUMAR","Kumar menüsü nasıl çalışır?\nSpin süresi ve hız ayarları.\nOyun mekaniği anlatımı.",Material.RED_DYE,"KUMAR"},
-            {"&#00ff88","&#44ffaa","◈ KOMUTLAR","Tüm admin komutlarını\nlistele ve açıklamalarını gör.\nEksiksiz komut rehberi.",Material.COMMAND_BLOCK,"CMD"},
-            {"&#aaaaaa","&#cccccc","◈ DESTEK","Yardım için admin\nile iletişime geç.\nHata bildirme ve öneriler.",Material.BOOK,"INFO"}
+            {"&#ff6600","&#ff8833","KASALAR","Sunucudaki tüm kasalar\nhakkında detaylı bilgi al.\nKasa sayısı, itemler ve efektler.",Material.CHEST,"KASALAR"},
+            {"&#00ccff","&#44ddff","ANAHTARLAR","Hangi anahtar hangi kasayı\naçar öğren ve envantere al.\nKey All herkesi açar!",Material.TRIPWIRE_HOOK,"ANAHTARLAR"},
+            {"&#aa44ff","&#cc77ff","EFEKTLER","Kasalardaki partikül efektlerini\ngörüntüle ve değiştir.\n7 farklı efekt seçeneği.",Material.FIREWORK_ROCKET,"EFX"},
+            {"&#ffdd00","&#ffee44","ŞANS","Her item için şans oranlarını\ngörüntüle ve düzenle.\nNadirlik sistemi açıklaması.",Material.GOLDEN_APPLE,"SANS"},
+            {"&#ff2244","&#ff5566","KUMAR","Kumar menüsü nasıl çalışır?\nSpin süresi ve hız ayarları.\nOyun mekaniği anlatımı.",Material.RED_DYE,"KUMAR"},
+            {"&#00ff88","&#44ffaa","KOMUTLAR","Tüm admin komutlarını\nlistele ve açıklamalarını gör.\nEksiksiz komut rehberi.",Material.COMMAND_BLOCK,"CMD"},
+            {"&#aaaaaa","&#cccccc","DESTEK","Yardım için admin\nile iletişime geç.\nHata bildirme ve öneriler.",Material.BOOK,"INFO"}
         };
         // Simetrik: 20,22,24 üst + 29,31,33 alt + 38 ortada alt
         int[] bSlots = {20, 22, 24, 29, 31, 33, 38};
@@ -3348,7 +3300,7 @@ public class LoginX extends JavaPlugin implements Listener {
             lore.add(color("&#00ffcc» Sol Tikla: &fDirekt Iade Et"));
             sm.setLore(lore); head.setItemMeta(sm); inv.setItem(i, head);
         }
-        inv.setItem(45, createBtn(Material.BOOK, "&#00ccff&l✦ İade Geçmişi", "IADE_LOG"));
+        inv.setItem(45, createBtn(Material.BOOK, "&#00ccff&lİade Geçmişi", "IADE_LOG"));
         inv.setItem(48, createBtn(Material.LAVA_BUCKET,   "&#ff3300Tum Gecmisi Sil"));
         inv.setItem(49, createBtn(Material.BARRIER,       "&#ff3333&lKapat"));
         inv.setItem(50, createBtn(Material.EMERALD_BLOCK, "&#00ff00Sayfayi Yenile"));
@@ -3367,13 +3319,13 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void openIadeLogMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, color("&#00ccff&l✦ İade Geçmişi"));
+        Inventory inv = Bukkit.createInventory(null, 54, color("&#00ccff&lİade Geçmişi"));
         ItemStack fill = makeBorderGlass("&#050520");
         for (int i = 0; i < 54; i++) inv.setItem(i, fill);
 
         // Başlık
         ItemStack header = new ItemStack(Material.BOOK); ItemMeta hm = header.getItemMeta();
-        hm.setDisplayName(color("&#00ccff&l✦ İade Geçmişi"));
+        hm.setDisplayName(color("&#00ccff&lİade Geçmişi"));
         List<String> hl = new ArrayList<>();
         hl.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
         hl.add(color("  &7Toplam İade: &f" + iadeLogs.size() + " adet"));
@@ -3405,7 +3357,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // Geri — slot 49
         ItemStack back = new ItemStack(Material.ARROW); ItemMeta bm = back.getItemMeta();
-        bm.setDisplayName(color("&#ffcc00← &fGeri Dön"));
+        bm.setDisplayName(color("&#ffcc00&fGeri Dön"));
         back.setItemMeta(bm); inv.setItem(49, back);
         p.openInventory(inv);
     }
@@ -3439,8 +3391,6 @@ public class LoginX extends JavaPlugin implements Listener {
         };
     }
 
-    /** Pembe-beyaz uyumlu, göz yormayan geçiş rengi — sadece seçili önemli metinlerde kullanılır. */
-    private static final String[] DAILY_REWARD_GRADIENT = {"&#ff9ecb", "&#ffb9db", "&#ffd6ea", "&#ffffff", "&#ffd6ea", "&#ffb9db", "&#ff9ecb"};
 
     /**
      * Günlük ödül anahtarı inşa eder — görünüşü "Ominous Bottle", adı doğrudan hangi kasayı
@@ -3452,7 +3402,7 @@ public class LoginX extends JavaPlugin implements Listener {
         String kasaName = dailyRewardKasaDisplayName(kasaId);
         ItemStack item = new ItemStack(Material.FEATHER, Math.max(1, amount));
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(buildRgbFlop(kasaName, DAILY_REWARD_GRADIENT, false));
+        meta.setDisplayName(color("&r" + getCrateColors(kasaId)[0] + kasaName));
         meta.setLore(standardKeyLore());
         meta.getPersistentDataContainer().set(keyTag, PersistentDataType.STRING, kasaId);
         item.setItemMeta(meta);
@@ -3497,6 +3447,7 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     /** Günlük ödül menüsünü açar/yeniler. Küçük, simetrik 27 slotluk tasarım. */
+    /** Günlük ödül menüsünü açar/yeniler. 27 slot: üst ortada bilgi, ortada 7 gün, alt ortada kapat. */
     private void openDailyRewardMenu(Player p) {
         UUID uid = p.getUniqueId();
         int currentDay = getDailyRewardDay(uid);
@@ -3504,159 +3455,104 @@ public class LoginX extends JavaPlugin implements Listener {
         long now = System.currentTimeMillis();
         boolean availableToday = now >= nextClaim;
 
-        String title = color("&7Günlük Ödül");
-        Inventory inv = Bukkit.createInventory(null, 27, title);
-
-        // Tüm alanı gri camla doldur — boş alanlar tıklanamaz
-        ItemStack filler = dailyRewardGlassFiller();
+        Inventory inv = Bukkit.createInventory(null, 27, color(UI_SUB + "Günlük Ödül"));
+        ItemStack filler = uiFiller();
         for (int i = 0; i < 27; i++) inv.setItem(i, filler);
 
-        // ── Bilgi itemi — slot 4 (yıldız lore'si sade tutulur, uzatılmaz) ──
-        ItemStack info = new ItemStack(Material.NETHER_STAR);
-        ItemMeta infoMeta = info.getItemMeta();
-        infoMeta.setDisplayName(color("&#ff9ecb✦ &fSilvera Günlük Ödül &#ff9ecb✦"));
-        List<String> infoLore = new ArrayList<>();
-        infoLore.add(color("&#5a5a6a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        infoLore.add(color("&fHer gün giriş yap, ödülünü topla!"));
-        infoLore.add(color(""));
-        infoLore.add(color("&7Bulunduğun Gün &8» &f" + currentDay + "&7/&f" + DAILY_REWARD_TOTAL_DAYS));
-        if (availableToday) {
-            infoLore.add(color("&7Durum &8» &#5fb87aÖdül Alınabilir"));
-        } else {
-            infoLore.add(color("&7Durum &8» &#e0a95fBekleniyor &8(" + formatDuration(nextClaim - now) + "&8)"));
-        }
-        infoLore.add(color(""));
-        infoLore.add(color("&7" + DAILY_REWARD_TOTAL_DAYS + ". günü tamamladığında"));
-        infoLore.add(color("&7döngü otomatik olarak &fGün 1&7'e sıfırlanır."));
-        infoLore.add(color("&#5a5a6a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        infoMeta.setLore(infoLore);
-        info.setItemMeta(infoMeta);
-        inv.setItem(4, info);
+        String status = availableToday
+            ? UI_OK + "Ödül alınabilir"
+            : UI_WARN + "Bekleniyor: " + UI_TEXT + formatDuration(nextClaim - now);
+        inv.setItem(4, uiItem(Material.BOOK, UI_TEXT + "Günlük Ödül",
+            UI_SUB + "Gün: " + UI_TEXT + currentDay + UI_SUB + " / " + DAILY_REWARD_TOTAL_DAYS,
+            status,
+            "",
+            UI_SUB + DAILY_REWARD_TOTAL_DAYS + ". günden sonra döngü başa döner."));
 
-        // ── Gün ikonları — slot 10-16 (7 gün, tam ortalanmış) ──
         int[] daySlots = {10, 11, 12, 13, 14, 15, 16};
         for (int day = 1; day <= DAILY_REWARD_TOTAL_DAYS; day++) {
             inv.setItem(daySlots[day - 1], buildDailyRewardDayIcon(day, currentDay, availableToday, now, nextClaim));
         }
 
-        // ── Kapat — slot 22 ──
-        ItemStack close = new ItemStack(Material.BARRIER);
-        ItemMeta closeMeta = close.getItemMeta();
-        closeMeta.setDisplayName(color("&#ff4444Kapat"));
-        close.setItemMeta(closeMeta);
-        inv.setItem(22, close);
-
+        inv.setItem(22, uiItem(Material.BARRIER, UI_BAD + "Kapat"));
         p.openInventory(inv);
     }
 
     private ItemStack buildDailyRewardDayIcon(int day, int currentDay, boolean availableToday, long now, long nextClaim) {
         boolean isLastDay = day == DAILY_REWARD_TOTAL_DAYS;
         LinkedHashMap<String, Integer> contents = dailyRewardContentsForDay(day);
-        int totalKeys = 0; for (int amt : contents.values()) totalKeys += amt;
 
         Material mat;
-        String statusLine;
+        String nameColor;
+        String status;
         boolean clickable = false;
 
         if (day < currentDay) {
-            // Bu döngüde zaten alındı — sadece alınan ödülün görünüşü Trial Spawner olur
             mat = Material.TRIAL_SPAWNER;
-            statusLine = color("&#5fb87a✔ &fAlındı &8— &7Bu ödülü bu döngüde teslim aldın");
+            nameColor = UI_SUB;
+            status = UI_SUB + "Alındı";
         } else if (day == currentDay) {
+            nameColor = UI_TEXT;
             if (availableToday) {
                 mat = isLastDay ? Material.ENDER_CHEST : Material.CHEST;
-                statusLine = color("&#5fb87a✔ &fÖdül Alınabilir &8— &#ff9ecbTıkla ve Al!");
+                status = UI_OK + "Hazır, almak için tıkla";
                 clickable = true;
             } else {
                 mat = Material.CLOCK;
-                statusLine = color("&#e0a95f⏳ &fBekleniyor &8— &7" + formatDuration(nextClaim - now) + " sonra hazır");
+                status = UI_WARN + "Bekleniyor: " + UI_TEXT + formatDuration(nextClaim - now);
             }
         } else {
             mat = Material.IRON_BARS;
-            statusLine = color("&#ff6666&fKilitli &8— &7Henüz bu güne ulaşmadın");
+            nameColor = UI_DIM;
+            status = UI_DIM + "Kilitli";
         }
 
-        ItemStack item = new ItemStack(mat);
-        ItemMeta meta = item.getItemMeta();
-        String dayLabel = isLastDay
-            ? color("&fGün " + day + " &8— &#ff9ecbSon Gün")
-            : color("&fGün " + day);
-        meta.setDisplayName(dayLabel);
+        String name = nameColor + "Gün " + day + (isLastDay ? UI_DIM + " | " + UI_ACCENT + "Son gün" : "");
 
         List<String> lore = new ArrayList<>();
-        lore.add(color("&#5a5a6a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        lore.add(statusLine);
-        lore.add(color(""));
-        if (isLastDay) {
-            lore.add(color("&fDöngünün son günü — &#ff9ecbSilvera &fseni en"));
-            lore.add(color("&fdeğerli ödülüyle ödüllendirir. Bu ödülü"));
-            lore.add(color("&faldığında döngü otomatik olarak &#ff9ecbGün 1&f'e"));
-            lore.add(color("&fsıfırlanır ve baştan başlayabilirsin."));
-        } else {
-            lore.add(color("&7Bu gün giriş yaptığında sana özel olarak"));
-            lore.add(color("&7anahtar ödülleri hazırlandı."));
-        }
-        lore.add(color(""));
-        lore.add(color("&7İçerik &8» &f" + totalKeys + " adet anahtar"));
+        lore.add(status);
+        lore.add("");
+        lore.add(UI_SUB + "Ödül");
         for (Map.Entry<String, Integer> ent : contents.entrySet()) {
-            String kName = dailyRewardKasaDisplayName(ent.getKey());
-            lore.add(color("&f  • " + ent.getValue() + "x &#ff9ecb" + kName));
-        }
-        lore.add(color(""));
-        if (clickable) {
-            lore.add(color("&#5fb87a▸ &fŞimdi tıklayarak ödülünü envanterine ekle."));
-        } else if (day == currentDay) {
-            lore.add(color("&#e0a95f▸ &7Bekleme süresi dolduğunda menü otomatik"));
-            lore.add(color("&7olarak bu ödülü almana izin verecek."));
-        } else if (day < currentDay) {
-            lore.add(color("&#5fb87a▸ &7Yeni döngüde bu ödül tekrar seninle olacak."));
-        } else {
-            lore.add(color("&#ff6666▸ &7Sırasıyla önceki günleri tamamlaman gerekiyor."));
-        }
-        lore.add(color("&#5a5a6a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        meta.setLore(lore);
-
-        if (clickable) {
-            meta.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            lore.add(UI_TEXT + "  " + ent.getValue() + "x " + dailyRewardKasaDisplayName(ent.getKey()));
         }
 
-        meta.addItemFlags(ItemFlag.values());
+        ItemStack item = uiItem(mat, name, lore.toArray(new String[0]));
+        ItemMeta meta = item.getItemMeta();
+        if (clickable) meta.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
         meta.getPersistentDataContainer().set(dailyRewardDayTag, PersistentDataType.INTEGER, day);
         item.setItemMeta(meta);
         return item;
     }
 
-    /** Günlük ödül menüsünde bir güne tıklanınca çalışır — sadece geçerli gün ve süre uygunsa ödül verir. */
     /** /duel berabere — SADECE dueldeyken kullanılabilir. Rakibine berabere teklifi gönderir. */
     private void handleDuelBerabereCommand(Player p) {
         String arenaId = playerDuel.get(p.getUniqueId());
-        if (arenaId == null) { p.sendMessage(color("&#c94848&l[DUEL] &fBu komutu sadece dueldeyken kullanabilirsin!")); return; }
+        if (arenaId == null) { p.sendMessage(duelErr("Bu komutu yalnızca dueldeyken kullanabilirsin.")); return; }
         UUID[] dp = duelPlayers.get(arenaId);
-        if (dp == null) { p.sendMessage(color("&#c94848&l[DUEL] &fDuel bulunamadı.")); return; }
+        if (dp == null) { p.sendMessage(duelErr("Duel bulunamadı.")); return; }
         Player opponent = null;
         for (UUID u : dp) if (!u.equals(p.getUniqueId())) opponent = Bukkit.getPlayer(u);
-        if (opponent == null || !opponent.isOnline()) { p.sendMessage(color("&#c94848&l[DUEL] &fRakip çevrimdışı.")); return; }
+        if (opponent == null || !opponent.isOnline()) { p.sendMessage(duelErr("Rakip çevrimdışı.")); return; }
 
         duelDrawRequest.put(opponent.getUniqueId(), p.getUniqueId());
 
         net.md_5.bungee.api.chat.TextComponent btnDrawKabul = new net.md_5.bungee.api.chat.TextComponent(
-            color("&#2ea86b&l[Berabere Kabul]"));
+            color(UI_OK + "[Kabul Et]"));
         btnDrawKabul.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(
             net.md_5.bungee.api.chat.ClickEvent.Action.RUN_COMMAND, "/duelberaberekabul"));
         net.md_5.bungee.api.chat.TextComponent spaceDraw = new net.md_5.bungee.api.chat.TextComponent("  ");
         net.md_5.bungee.api.chat.TextComponent btnDrawReddet = new net.md_5.bungee.api.chat.TextComponent(
-            color("&#c94848&l[Berabere Reddet]"));
+            color(UI_BAD + "[Reddet]"));
         btnDrawReddet.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(
             net.md_5.bungee.api.chat.ClickEvent.Action.RUN_COMMAND, "/duelberaberereddet"));
 
-        opponent.sendMessage(color(""));
-        opponent.sendMessage(color("  " + duelFlop("⚔ " + p.getName() + " berabere teklif etti!", true)));
+        opponent.sendMessage(duel(hl(p.getName()) + " berabere teklif ediyor."));
         opponent.spigot().sendMessage(btnDrawKabul, spaceDraw, btnDrawReddet);
-        opponent.sendMessage(color(""));
-        opponent.playSound(opponent.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.3f);
-        p.sendMessage(color("  " + duelFlop("Berabere teklifin " + opponent.getName() + " kişisine gönderildi.", false)));
+        opponent.playSound(opponent.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.4f);
+        p.sendMessage(duel("Berabere teklifin " + hl(opponent.getName()) + " oyuncusuna gönderildi."));
     }
 
+    /** Günlük ödül menüsünde bir güne tıklanınca çalışır; yalnızca sıradaki gün ve süre uygunsa ödül verir. */
     private void handleDailyRewardClick(Player p, int clickedDay) {
         UUID uid = p.getUniqueId();
         int currentDay = getDailyRewardDay(uid);
@@ -3664,8 +3560,8 @@ public class LoginX extends JavaPlugin implements Listener {
         long now = System.currentTimeMillis();
 
         if (clickedDay != currentDay || now < nextClaim) {
-            p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 0.6f, 1f);
-            return; // sıra bu günde değil veya süre dolmamış — hiçbir şey yapma
+            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.6f, 0.8f);
+            return;
         }
 
         LinkedHashMap<String, Integer> contents = dailyRewardContentsForDay(clickedDay);
@@ -3679,20 +3575,13 @@ public class LoginX extends JavaPlugin implements Listener {
         int newDay = wasLastDay ? 1 : clickedDay + 1;
         setDailyRewardState(uid, newDay, now + DAILY_REWARD_COOLDOWN_MS);
 
-        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.3f);
-        p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1f);
+        p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
         if (wasLastDay) {
-            p.sendTitle(color("&#ff9ecb&l✦ DÖNGÜ TAMAMLANDI ✦"), color("&fGünlük ödül döngüsü &#ff9ecbGün 1&f'e sıfırlandı!"), 5, 60, 15);
-            p.sendMessage(color(""));
-            p.sendMessage(color("  &#ff9ecb&l✦ Silvera Günlük Ödül &8» &fSon günü tamamladın!"));
-            p.sendMessage(color("  &7Döngü sıfırlandı, yarından itibaren tekrar &fGün 1&7'den başlayabilirsin."));
-            p.sendMessage(color(""));
+            p.sendMessage(uiMsg("Günlük Ödül", "Son günün ödülünü aldın. Döngü Gün 1'den yeniden başlayacak."));
         } else {
-            p.sendTitle(color("&#5fb87a&l✔ ÖDÜL ALINDI"), color("&fGün " + clickedDay + " &7ödülü envanterine eklendi."), 5, 50, 10);
-            p.sendMessage(color("&#5fb87a&l[GÜNLÜK ÖDÜL] &fGün " + clickedDay + " &7ödülün envanterine eklendi."));
+            p.sendMessage(uiMsg("Günlük Ödül", "Gün " + hl(String.valueOf(clickedDay)) + " ödülün envanterine eklendi."));
         }
 
-        // Menüyü güncel duruma göre yeniden aç
         openDailyRewardMenu(p);
     }
 
@@ -3710,18 +3599,15 @@ public class LoginX extends JavaPlugin implements Listener {
             Map<Integer, ItemStack> opLeftover = p.getInventory().addItem(opKey);
             for (ItemStack rem : opLeftover.values()) p.getWorld().dropItem(p.getLocation(), rem);
 
-            p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.3f);
-            p.sendTitle(color("&#ff9ecb&lKIT KASASI"), color("&fÖdülün envanterine eklendi!"), 5, 50, 10);
-            p.sendMessage(color(""));
-            p.sendMessage(color("  &#ff9ecb&lSilvera &8» &fKit Kasası Anahtarı envanterine eklendi. &8(OP — sınırsız)"));
-            p.sendMessage(color(""));
+            p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
+            p.sendMessage(uiMsg("Kit Kasası", "Kit Kasası anahtarı envanterine eklendi."));
             return;
         }
 
         // Zaten bu hesapla almış mı? (restart/relog bağımsız — kalıcı config)
         boolean alreadyClaimedByAccount = getConfig().getBoolean("kitkasasi.claimed." + uid, false);
         if (alreadyClaimedByAccount) {
-            p.sendMessage(color("&#ff4444&lSilvera &8» &cKit Kasası ödülünü daha önce aldın, tekrar alamazsın."));
+            p.sendMessage(uiErr("Kit Kasası", "Bu ödülü daha önce aldın."));
             return;
         }
 
@@ -3729,13 +3615,13 @@ public class LoginX extends JavaPlugin implements Listener {
         String ip = (p.getAddress() != null && p.getAddress().getAddress() != null)
             ? p.getAddress().getAddress().getHostAddress() : null;
         if (ip == null) {
-            p.sendMessage(color("&#ff4444&lSilvera &8» &cIP adresin doğrulanamadı, lütfen tekrar dene."));
+            p.sendMessage(uiErr("Kit Kasası", "IP adresin doğrulanamadı. Tekrar dene."));
             return;
         }
         String ipKey = "kitkasasi.ip." + ip.replace(".", "_");
         String ipOwner = getConfig().getString(ipKey, null);
         if (ipOwner != null && !ipOwner.equalsIgnoreCase(p.getName())) {
-            p.sendMessage(color("&#ff4444&lSilvera &8» &cBu IP adresinden zaten bir hesap Kit Kasası ödülünü almış."));
+            p.sendMessage(uiErr("Kit Kasası", "Bu IP adresinden bir hesap ödülü zaten almış."));
             return;
         }
 
@@ -3748,12 +3634,8 @@ public class LoginX extends JavaPlugin implements Listener {
         getConfig().set(ipKey, p.getName());
         saveConfig();
 
-        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.3f);
-        p.sendTitle(color("&#ff9ecb&lKIT KASASI"), color("&fÖdülün envanterine eklendi!"), 5, 50, 10);
-        p.sendMessage(color(""));
-        p.sendMessage(color("  &#ff9ecb&lSilvera &8» &fKit Kasası Anahtarı envanterine eklendi."));
-        p.sendMessage(color("  &7Bu ödül tek seferliktir, tekrar &c/kitkasası &7kullanamazsın."));
-        p.sendMessage(color(""));
+        p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
+        p.sendMessage(uiMsg("Kit Kasası", "Kit Kasası anahtarı envanterine eklendi. Bu ödül tek seferliktir."));
     }
 
     // ─────────────────────────────────────────────
@@ -3768,7 +3650,7 @@ public class LoginX extends JavaPlugin implements Listener {
         // Stash'e item koymaya izin ver — cancel etme
         if (title.contains("Stash")) return;
         boolean managed = title.contains("Iade") || title.contains("Anahtar") || title.contains("Kasa")
-            || title.contains("Crate") || title.contains("Kasa Crate") || title.contains("Olum Detayi")
+            || title.contains("Olum Detayi")
             || title.contains("Kumar") || title.contains("Efekt Secimi") || title.contains("Bilgi Merkezi")
             || title.contains("Hile Kontrol") || title.contains("Duel Arenaları") || title.contains("Duel Ayarları")
             || title.contains("Duel Daveti")
@@ -3950,15 +3832,13 @@ public class LoginX extends JavaPlugin implements Listener {
         if (title.contains("Duel Arenaları")) {
             ItemStack ci2 = e.getCurrentItem();
             if (ci2 == null || !ci2.hasItemMeta()) return;
-            List<String> lore2 = ci2.getItemMeta().getLore();
-            if (lore2 == null) return;
-            String duelId = lore2.stream().map(ChatColor::stripColor).filter(l -> l.trim().startsWith("DUEL_ID:"))
-                .map(l -> l.trim().substring(8)).findFirst().orElse(null);
-            if (duelId == null) return;
-            if (duelPlayers.containsKey(duelId)) { p.sendMessage(color("&cBu arena dolu!")); return; }
-            if (duelSpawn1.get(duelId) == null || duelSpawn2.get(duelId) == null) { p.sendMessage(color("&cBu arena henüz hazır değil.")); return; }
+            String arenaTag = duelGuiValue(ci2);
+            if (arenaTag == null || !arenaTag.startsWith("arena:")) return;
+            String duelId = arenaTag.substring(6);
+            if (duelPlayers.containsKey(duelId)) { p.sendMessage(duelErr("Bu arena dolu.")); return; }
+            if (duelSpawn1.get(duelId) == null || duelSpawn2.get(duelId) == null) { p.sendMessage(duelErr("Bu arena henüz hazır değil.")); return; }
             p.closeInventory();
-            p.sendMessage(color("&#ffcc00&l[DUEL] &fArena &e" + duelId + " &fiçin &b/1v1 <oyuncu> &fkomutu ile davet gönder."));
+            p.sendMessage(duel("Arena " + hl(duelId) + " için davet göndermek üzere " + hl("/1v1 <oyuncu>") + " komutunu kullan."));
             return;
         }
 
@@ -3967,24 +3847,22 @@ public class LoginX extends JavaPlugin implements Listener {
             boolean isInviteMenu = title.contains("Duel Daveti");
             ItemStack ci3 = e.getCurrentItem();
             if (ci3 == null || !ci3.hasItemMeta()) return;
-            List<String> lore3 = ci3.getItemMeta().getLore();
-            if (lore3 == null) return;
-            List<String> stripped3 = lore3.stream().map(ChatColor::stripColor).map(String::trim).toList();
+            String btnTag = duelGuiValue(ci3);
+            if (btnTag == null) return;
 
             // Onayla / Gönder butonu (sadece davet menüsünde)
-            if (isInviteMenu && stripped3.stream().anyMatch(l -> l.equals("DUEL_INVITE_CONFIRM"))) {
+            if (isInviteMenu && btnTag.equals("confirm")) {
                 UUID targetUid = duelPendingTarget.remove(p.getUniqueId());
                 p.closeInventory();
-                if (targetUid == null) { p.sendMessage(color("&#ff4444&l[DUEL] &cDavet süresi doldu, tekrar dene.")); return; }
+                if (targetUid == null) { p.sendMessage(duelErr("Davet süresi doldu. Tekrar dene.")); return; }
                 Player target = Bukkit.getPlayer(targetUid);
                 sendDuelInvite(p, target, "hedef oyuncu");
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.3f);
                 return;
             }
 
-            String toggle = stripped3.stream().filter(l -> l.startsWith("DUEL_TOGGLE:"))
-                .map(l -> l.substring(12)).findFirst().orElse(null);
-            if (toggle == null) return;
+            if (!btnTag.startsWith("toggle:")) return;
+            String toggle = btnTag.substring(7);
 
             HashMap<UUID, Boolean> map = switch (toggle) {
                 case "web"    -> duelWebEnabled;
@@ -4004,7 +3882,7 @@ public class LoginX extends JavaPlugin implements Listener {
             if (isInviteMenu) {
                 UUID targetUid = duelPendingTarget.get(p.getUniqueId());
                 Player target = targetUid != null ? Bukkit.getPlayer(targetUid) : null;
-                if (target == null) { p.sendMessage(color("&#ff4444&l[DUEL] &cHedef oyuncu çevrimdışı oldu.")); return; }
+                if (target == null) { p.sendMessage(duelErr("Oyuncu çevrimdışı oldu.")); return; }
                 openDuelInviteMenu(p, target);
             } else {
                 openDuelSettingsMenu(p, p.hasPermission("loginx.admin"));
@@ -4062,7 +3940,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 CrateSession cs = activeSessions.get(p.getUniqueId());
                 if (cs == null || cs.done) return;
                 p.openInventory(cs.inv);
-                p.sendActionBar(color("&#ff4444⚠ &fKasa acilirken cikis yapamazsin!"));
+                p.sendActionBar(color(UI_BAD + "Kasa açılırken menüyü kapatamazsın."));
             }
         }.runTaskLater(this, 1L);
     }
@@ -4074,21 +3952,21 @@ public class LoginX extends JavaPlugin implements Listener {
         switch (section) {
             case "KASALAR" -> {
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#ffcc00&l  ✦ Kasalar &8(" + crates.size() + " adet)"));
+                p.sendMessage(color("&#ffcc00&l  Kasalar &8(" + crates.size() + " adet)"));
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                for (String k : crates.keySet()) p.sendMessage(color("  &#00ff88◆ &f" + capitalize(k) + " &8│ &7" + crateItems.getOrDefault(k, new ArrayList<>()).size() + " eşya │ Efekt: &e" + crateEffectType.getOrDefault(k, "varsayilan")));
+                for (String k : crates.keySet()) p.sendMessage(color("  &#00ff88&f" + capitalize(k) + " &8│ &7" + crateItems.getOrDefault(k, new ArrayList<>()).size() + " eşya │ Efekt: &e" + crateEffectType.getOrDefault(k, "varsayilan")));
                 p.sendMessage(color("&#ffcc00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
             }
             case "ANAHTARLAR" -> {
                 p.sendMessage(color("&#00ccff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#00ccff&l  ✦ Anahtarlar"));
+                p.sendMessage(color("&#00ccff&l  Anahtarlar"));
                 p.sendMessage(color("&#00ccff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                for (Map.Entry<String, String> en : KEY_BASE_NAMES.entrySet()) p.sendMessage(color("  &#00ccff◆ &f" + en.getValue() + " &8→ &e" + capitalize(en.getKey()) + " Kasası"));
+                for (Map.Entry<String, String> en : KEY_BASE_NAMES.entrySet()) p.sendMessage(color("  &#00ccff&f" + en.getValue() + " &8→ &e" + capitalize(en.getKey()) + " Kasası"));
                 p.sendMessage(color("&#00ccff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
             }
             case "EFX" -> {
                 p.sendMessage(color("&#aa44ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#aa44ff&l  ✦ Efektler"));
+                p.sendMessage(color("&#aa44ff&l  Efektler"));
                 p.sendMessage(color("&#aa44ff&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 p.sendMessage(color("  &7varsayilan, fireworks, temiz, yildiz, kristal, alev, buz"));
                 p.sendMessage(color("  &8» &e/kasafarkliefektler [kasa_ismi]"));
@@ -4096,17 +3974,17 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             case "SANS" -> {
                 p.sendMessage(color("&#ffdd00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#ffdd00&l  ✦ Çıkma Şansı Sistemi"));
+                p.sendMessage(color("&#ffdd00&l  Çıkma Şansı Sistemi"));
                 p.sendMessage(color("&#ffdd00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 p.sendMessage(color("  &8» &e/kasasansayarla &f<kasa> &b<#sira> &a<sans>"));
-                p.sendMessage(color("  &#ff2244◆ &f%0-1   = Efsanevi  | &#aa00ff◆ &f%1-3   = Epik"));
-                p.sendMessage(color("  &#4488ff◆ &f%3-7   = Nadir     | &#00cc44◆ &f%7-15  = Yayginsiz"));
-                p.sendMessage(color("  &#aaaaaa◆ &f%15+   = Yaygın"));
+                p.sendMessage(color("  &#ff2244&f%0-1   = Efsanevi  | &#aa00ff&f%1-3   = Epik"));
+                p.sendMessage(color("  &#4488ff&f%3-7   = Nadir     | &#00cc44&f%7-15  = Yayginsiz"));
+                p.sendMessage(color("  &#aaaaaa&f%15+   = Yaygın"));
                 p.sendMessage(color("&#ffdd00&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
             }
             case "KUMAR" -> {
                 p.sendMessage(color("&#ff2244&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#ff2244&l  ✦ Kumar Sistemi"));
+                p.sendMessage(color("&#ff2244&l  Kumar Sistemi"));
                 p.sendMessage(color("&#ff2244&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 p.sendMessage(color("  &7Kasa açıldığında spin animasyonu başlar."));
                 p.sendMessage(color("  &7Hızdan yavaşa gider, ortadaki eşyayı kazanırsın."));
@@ -4115,15 +3993,15 @@ public class LoginX extends JavaPlugin implements Listener {
             }
             case "CMD" -> {
                 p.sendMessage(color("&#00ff88&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#00ff88&l  ✦ Admin Komutları"));
+                p.sendMessage(color("&#00ff88&l  Admin Komutları"));
                 p.sendMessage(color("&#00ff88&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 for (String c : new String[]{"/kasaayarla <isim>","/kasasil <isim>","/kasaicsil <kasa> #<sira>","/icineitemkoy <kasa>","/kasaidlist <kasa>","/kasasansayarla <kasa> #<sira> <sans>","/kasakumarmenu ayarla","/kasakeyver <oyuncu|all> <kasa>","/kasafarkliefektler [kasa]","/kasabilgi","/1v1wand","/korumasurem","/korumakapat"})
-                    p.sendMessage(color("  &#00ff88◆ &7" + c));
+                    p.sendMessage(color("  &#00ff88&7" + c));
                 p.sendMessage(color("&#00ff88&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
             }
             case "INFO" -> {
                 p.sendMessage(color("&#aaaaaa&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                p.sendMessage(color("&#aaaaaa&l  ✦ Destek"));
+                p.sendMessage(color("&#aaaaaa&l  Destek"));
                 p.sendMessage(color("&#aaaaaa&l━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
                 p.sendMessage(color("  &7Yardım için sunucu adminine başvurun."));
                 p.sendMessage(color("  &7Hata bildir: &e/report <mesaj>"));
@@ -4162,21 +4040,21 @@ public class LoginX extends JavaPlugin implements Listener {
 
     // ─── Duel daveti gönderme — hem /1v1 hem /duel onayla butonu tarafından kullanılır ───
     private void sendDuelInvite(Player p, Player target, String rawName) {
-        if (target == null || target.equals(p)) { p.sendMessage(color("&c" + rawName + " çevrimiçi değil.")); return; }
-        if (playerDuel.containsKey(p.getUniqueId())) { p.sendMessage(color("&#ff4444&l[DUEL] &cZaten bir dueldasın.")); return; }
-        if (playerDuel.containsKey(target.getUniqueId())) { p.sendMessage(color("&#ff4444&l[DUEL] &c" + target.getName() + " zaten bir duelda.")); return; }
+        if (target == null || target.equals(p)) { p.sendMessage(duelErr(rawName + " çevrimiçi değil.")); return; }
+        if (playerDuel.containsKey(p.getUniqueId())) { p.sendMessage(duelErr("Zaten bir dueldasın.")); return; }
+        if (playerDuel.containsKey(target.getUniqueId())) { p.sendMessage(duelErr(target.getName() + " zaten bir duelda.")); return; }
 
         // ── Tekrar atma engeli: hedefte zaten davet varsa iptal et ──
         if (duelInvite.containsKey(target.getUniqueId())) {
             UUID existing = duelInvite.get(target.getUniqueId());
             if (existing.equals(p.getUniqueId())) {
-                p.sendMessage(color("&#ff4444&l[DUEL] &cZaten bu oyuncuya davet gönderdin. Kabul etmesini bekle."));
+                p.sendMessage(duelErr("Bu oyuncuya zaten davet gönderdin. Yanıtını bekle."));
                 return;
             }
         }
 
         String freeArena = findFreeDuelArena();
-        if (freeArena == null) { p.sendMessage(color("&#ff4444&l[DUEL] &cŞu an boş arena yok!")); return; }
+        if (freeArena == null) { p.sendMessage(duelErr("Şu an boş arena yok.")); return; }
 
         boolean webOn    = duelWebEnabled.getOrDefault(p.getUniqueId(), false);
         boolean elyOn    = duelElyEnabled.getOrDefault(p.getUniqueId(), false);
@@ -4202,53 +4080,98 @@ public class LoginX extends JavaPlugin implements Listener {
                 duelInviteWeb.remove(target.getUniqueId()); duelInviteEly.remove(target.getUniqueId());
                 duelInviteLadder.remove(target.getUniqueId()); duelInviteOak.remove(target.getUniqueId());
                 duelInviteStick.remove(target.getUniqueId()); duelInviteChest.remove(target.getUniqueId());
-                if (p.isOnline()) p.sendMessage(color("&#ff4444&l[DUEL] &f" + target.getName() + " &7daveti reddetti/süresi doldu."));
-                if (target.isOnline()) target.sendMessage(color("&#ff4444&l[DUEL] &f" + p.getName() + " &7ile duel daveti süresi doldu."));
+                if (p.isOnline()) p.sendMessage(duel(hl(target.getName()) + " daveti yanıtlamadı, süre doldu."));
+                if (target.isOnline()) target.sendMessage(duel(hl(p.getName()) + " ile duel davetinin süresi doldu."));
             }
         }.runTaskLater(this, 20L * 30).getTaskId();
         duelInviteTask.put(target.getUniqueId(), tid);
 
-        // ── Profesyonel, tek tonlu düğmeler — [Kabul Et] yeşil / [Reddet] kırmızı ──
-        net.md_5.bungee.api.chat.TextComponent btnKabul = new net.md_5.bungee.api.chat.TextComponent(
-            color("&#2ea86b&l▍ ✔ Kabul Et ▍"));
+        // Kabul / Reddet düğmeleri
+        net.md_5.bungee.api.chat.TextComponent btnKabul = new net.md_5.bungee.api.chat.TextComponent(color(UI_OK + "[Kabul Et]"));
         btnKabul.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(
             net.md_5.bungee.api.chat.ClickEvent.Action.RUN_COMMAND, "/1v1kabul"));
         btnKabul.setHoverEvent(new net.md_5.bungee.api.chat.HoverEvent(
             net.md_5.bungee.api.chat.HoverEvent.Action.SHOW_TEXT,
-            new net.md_5.bungee.api.chat.ComponentBuilder(color("&#2ea86bDuel davetini kabul et")).create()));
+            new net.md_5.bungee.api.chat.ComponentBuilder(color(UI_OK + "Duel davetini kabul et")).create()));
 
-        net.md_5.bungee.api.chat.TextComponent space = new net.md_5.bungee.api.chat.TextComponent("   ");
+        net.md_5.bungee.api.chat.TextComponent space = new net.md_5.bungee.api.chat.TextComponent("  ");
 
-        net.md_5.bungee.api.chat.TextComponent btnReddet = new net.md_5.bungee.api.chat.TextComponent(
-            color("&#c94848&l▍ ✖ Reddet ▍"));
+        net.md_5.bungee.api.chat.TextComponent btnReddet = new net.md_5.bungee.api.chat.TextComponent(color(UI_BAD + "[Reddet]"));
         btnReddet.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(
             net.md_5.bungee.api.chat.ClickEvent.Action.RUN_COMMAND, "/1v1reddet"));
         btnReddet.setHoverEvent(new net.md_5.bungee.api.chat.HoverEvent(
             net.md_5.bungee.api.chat.HoverEvent.Action.SHOW_TEXT,
-            new net.md_5.bungee.api.chat.ComponentBuilder(color("&#c94848Duel davetini reddet")).create()));
+            new net.md_5.bungee.api.chat.ComponentBuilder(color(UI_BAD + "Duel davetini reddet")).create()));
 
-        target.sendMessage(color(""));
-        target.sendMessage(color("  &#00aaff&l⚔ &r&#ffffff&l" + p.getName() + " &r&#aaaaaa&oseni duel'e davet etti!"));
-        target.sendMessage(color("  &#555555▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        target.sendMessage(color("  &7Ağ:"      + (webOn    ? " &#00ff88Açık" : " &#ff4444Kapalı")
-                          + "   &7Elytra:"      + (elyOn    ? " &#00ff88Açık" : " &#ff4444Kapalı")
-                          + "   &7Merdiven:"    + (ladderOn ? " &#00ff88Açık" : " &#ff4444Kapalı")));
-        target.sendMessage(color("  &7Meşe Odun:"+ (oakOn    ? " &#00ff88Açık" : " &#ff4444Kapalı")
-                          + "   &7Tahta:"       + (stickOn  ? " &#00ff88Açık" : " &#ff4444Kapalı")
-                          + "   &7Göğüslük:"    + (chestOn  ? " &#00ff88Açık" : " &#ff4444Kapalı")));
-        target.sendMessage(color("  &#555555▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+        String sep = UI_DIM + " | ";
+        target.sendMessage(duel(hl(p.getName()) + " seni duele davet etti."));
+        target.sendMessage(color(UI_SUB + "Örümcek Ağı: " + duelRuleState(webOn) + sep + UI_SUB + "Elytra: " + duelRuleState(elyOn)
+            + sep + UI_SUB + "Merdiven: " + duelRuleState(ladderOn)));
+        target.sendMessage(color(UI_SUB + "Meşe Odun: " + duelRuleState(oakOn) + sep + UI_SUB + "Tahta: " + duelRuleState(stickOn)
+            + sep + UI_SUB + "Göğüslük: " + duelRuleState(chestOn)));
         target.spigot().sendMessage(btnKabul, space, btnReddet);
-        target.sendMessage(color(""));
-        target.playSound(target.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 2f);
-        p.sendMessage(color("&#00aaff&l[DUEL] &f" + target.getName() + " &7kişisine duel daveti gönderildi."));
+        target.playSound(target.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.4f);
+        p.sendMessage(duel("Duel daveti " + hl(target.getName()) + " oyuncusuna gönderildi."));
     }
 
-    // ─── Duel rengi — profesyonel, tek tonlu koyu mavi (eski: aşırı parlak rainbow gradient) ───
-    private static final String DUEL_PRO_COLOR = "&#2266bb";
+    // ─── Ortak arayüz paleti: Günlük Ödül, Bakım ve Duel aynı renkleri kullanır ───
+    private static final String UI_TEXT   = "&#e4e7ec"; // ana metin
+    private static final String UI_SUB    = "&#98a2b3"; // ikincil metin
+    private static final String UI_DIM    = "&#667085"; // çerçeve / ayraç
+    private static final String UI_ACCENT = "&#7aa2d8"; // vurgu
+    private static final String UI_OK     = "&#6fbf8f"; // olumlu
+    private static final String UI_WARN   = "&#d9a85b"; // bekleme / uyarı
+    private static final String UI_BAD    = "&#d46a6a"; // olumsuz
+
+    /** [Etiket] gövde — tek tip mesaj biçimi. */
+    private String uiMsg(String tag, String body) {
+        return color(UI_DIM + "[" + UI_ACCENT + tag + UI_DIM + "] " + UI_TEXT + body);
+    }
+
+    private String uiErr(String tag, String body) {
+        return color(UI_DIM + "[" + UI_BAD + tag + UI_DIM + "] " + UI_TEXT + body);
+    }
+
+    private String duel(String body)    { return uiMsg("Duel", body); }
+    private String duelErr(String body) { return uiErr("Duel", body); }
+
+    /** Mesaj içinde vurgulu parça; sonrasında ana metin rengine döner. */
+    private static String hl(String s) { return UI_ACCENT + s + UI_TEXT; }
+
+    private String duelRuleState(boolean on) { return on ? UI_OK + "Açık" : UI_BAD + "Kapalı"; }
+
+    private String duelGuiValue(ItemStack it) {
+        if (it == null || !it.hasItemMeta()) return null;
+        return it.getItemMeta().getPersistentDataContainer().get(duelGuiTag, PersistentDataType.STRING);
+    }
 
     private String duelFlop(String text, boolean bold) {
         String stripped = org.bukkit.ChatColor.stripColor(color(text));
-        return color(DUEL_PRO_COLOR + (bold ? "&l" : "") + stripped);
+        return color(UI_ACCENT + (bold ? "&l" : "") + stripped);
+    }
+
+    /** Menülerde kullanılan sade gri dolgu camı. */
+    private ItemStack uiFiller() {
+        ItemStack pane = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta m = pane.getItemMeta();
+        m.setDisplayName(" ");
+        pane.setItemMeta(m);
+        return pane;
+    }
+
+    /** İsim ve lore satırlarını italik olmayan, tek tip biçimde kuran item üretici. */
+    private ItemStack uiItem(Material mat, String name, String... lore) {
+        ItemStack it = new ItemStack(mat);
+        ItemMeta m = it.getItemMeta();
+        m.setDisplayName(color("&r" + name));
+        if (lore.length > 0) {
+            List<String> l = new ArrayList<>();
+            for (String x : lore) l.add(color("&r" + x));
+            m.setLore(l);
+        }
+        m.addItemFlags(ItemFlag.values());
+        it.setItemMeta(m);
+        return it;
     }
 
     private void startDuel(Player p1, Player p2, String arenaId, boolean[] rules) {
@@ -4269,17 +4192,10 @@ public class LoginX extends JavaPlugin implements Listener {
         for (Player dp : new Player[]{p1, p2}) {
             dp.setWalkSpeed(0f);
             dp.setFlySpeed(0f);
-            // RGB flop mavi/açık mavi başlangıç mesajı
-            String titleLine = duelFlop("⚔ DUEL BAŞLIYOR ⚔", true);
-            dp.sendTitle(titleLine, color("&#aaaaaa&o3 saniye içinde serbest kalacaksın..."), 5, 60, 10);
-            dp.sendMessage(color(""));
-            dp.sendMessage(color("  " + duelFlop("⚔ DUEL BAŞLIYOR ⚔", true)));
-            dp.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-            dp.sendMessage(color("  &#ffffff&lRakip: &r&#ffcc00" + (dp == p1 ? p2.getName() : p1.getName())));
-            dp.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-            dp.sendMessage(color("  &7⚠ &fDuel sırasında sadece &e/ec &fve &e/pv &fkomutları kullanılabilir!"));
-            dp.sendMessage(color("  &7⚠ &fOyundan çıkarsan &cdirek ölürsün!"));
-            dp.sendMessage(color(""));
+            dp.sendTitle(duelFlop("Duel", true), color(UI_SUB + "3 saniye sonra başlıyor"), 5, 60, 10);
+            dp.sendMessage(duel("Rakip: " + hl(dp == p1 ? p2.getName() : p1.getName())));
+            dp.sendMessage(color(UI_SUB + "Duel sırasında yalnızca " + UI_ACCENT + "/duel berabere" + UI_SUB + " komutu kullanılabilir."));
+            dp.sendMessage(color(UI_SUB + "Oyundan çıkarsan maçı kaybedersin."));
             dp.playSound(dp.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1f, 1f);
         }
 
@@ -4289,10 +4205,8 @@ public class LoginX extends JavaPlugin implements Listener {
                 if (count > 0) {
                     for (Player dp : new Player[]{p1, p2}) {
                         if (!dp.isOnline()) { cancel(); endDuelDisconnect(arenaId, dp); return; }
-                        // Geri sayım hem title hem chat
                         String countTitle = duelFlop(String.valueOf(count), true);
-                        dp.sendTitle(countTitle, color("&#cccccc&oBekle..."), 0, 25, 5);
-                        dp.sendMessage(color("  " + duelFlop(count + "...", true)));
+                        dp.sendTitle(countTitle, color(UI_SUB + "Hazırlan"), 0, 25, 5);
                         dp.playSound(dp.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1f, count == 1 ? 2f : 1f);
                     }
                     count--;
@@ -4301,10 +4215,9 @@ public class LoginX extends JavaPlugin implements Listener {
                     duelFrozen.remove(p1.getUniqueId()); duelFrozen.remove(p2.getUniqueId());
                     for (Player dp : new Player[]{p1, p2}) {
                         dp.setWalkSpeed(0.2f); dp.setFlySpeed(0.1f);
-                        String fightTitle = duelFlop("⚔ SAVAŞ! ⚔", true);
-                        dp.sendTitle(fightTitle, color("&#00ff88&oİyi şanslar!"), 5, 40, 10);
-                        dp.sendMessage(color("  " + duelFlop("⚔ SERBEST! İyi şanslar!", true)));
-                        dp.playSound(dp.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.5f);
+                        String fightTitle = duelFlop("Başla", true);
+                        dp.sendTitle(fightTitle, color(UI_OK + "İyi şanslar"), 5, 40, 10);
+                        dp.playSound(dp.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.8f);
                     }
                     // 5 dakika uyarısı
                     new BukkitRunnable() {
@@ -4316,11 +4229,8 @@ public class LoginX extends JavaPlugin implements Listener {
                             for (UUID uid : dp2) {
                                 Player dp3 = Bukkit.getPlayer(uid);
                                 if (dp3 != null && dp3.isOnline()) {
-                                    dp3.sendMessage(color(""));
-                                    dp3.sendMessage(color("  " + duelFlop("⏰ DUEL 5 DAKİKA OLDU!", true) + " " + color("&#aaaaaa:D")));
-                                    dp3.sendMessage(color("  &#aaaaaa&o5 dakikadır dövüşüyorsunuz, hâlâ bitiremediniz mi? :D"));
-                                    dp3.sendMessage(color(""));
-                                    dp3.playSound(dp3.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
+                                    dp3.sendMessage(duel("Duel 5 dakikadır sürüyor. 10 dakikada bitmezse berabere sayılır."));
+                                    dp3.playSound(dp3.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.4f);
                                 }
                             }
                         }
@@ -4341,11 +4251,10 @@ public class LoginX extends JavaPlugin implements Listener {
                                 Player dp5 = Bukkit.getPlayer(uid);
                                 if (dp5 != null && dp5.isOnline()) {
                                     dp5.sendTitle(
-                                        duelFlop("⏰ SÜRE DOLDU!", true),
-                                        color("&#aaaaaa&o10 dakika içinde bitirilemedi, ışınlanıyorsun..."),
+                                        duelFlop("Süre doldu", true),
+                                        color(UI_SUB + "10 dakikada bitmedi, spawn noktasına ışınlanıyorsun."),
                                         5, 60, 15);
-                                    dp5.sendMessage(color("  " + duelFlop("⏰ DUEL 10 DAKİKA SINIRINA ULAŞTI!", true)));
-                                    dp5.sendMessage(color("  &#aaaaaa&oBerabere sayıldı, ışınlanıyorsun."));
+                                    dp5.sendMessage(duel("Duel 10 dakika sınırına ulaştı. Berabere sayıldı."));
                                     dp5.playSound(dp5.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 1f);
                                     teleportToSpawn(dp5);
                                 }
@@ -4377,23 +4286,17 @@ public class LoginX extends JavaPlugin implements Listener {
 
         // Tüm sunucuya duel sonucu
         for (Player on : Bukkit.getOnlinePlayers()) {
-            on.sendMessage(color(""));
-            on.sendMessage(color("  " + duelFlop("⚔ DUEL SONUCU ⚔", true)));
-            on.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-            on.sendMessage(color("  &#ffcc00&lKazanan: &r&#ffffff&l" + winnerName));
-            on.sendMessage(color("  &#ff4444&l☠ Kaybeden: &r&#aaaaaa" + loserName));
-            on.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-            on.sendMessage(color(""));
+            on.sendMessage(duel(UI_OK + winnerName + UI_TEXT + " duelde " + UI_BAD + loserName + UI_TEXT + " oyuncusunu yendi."));
         }
 
         // Kaybedene
         if (loser != null && loser.isOnline()) {
             loser.setWalkSpeed(0.2f); loser.setFlySpeed(0.1f);
             loser.sendTitle(
-                color("&#ff4444&l☠ KAYBETTİN ☠"),
-                color("&#aaaaaa&oKazanan: &#ffffff" + winnerName),
+                color(UI_BAD + "Kaybettin"),
+                color(UI_SUB + "Kazanan: " + UI_TEXT + winnerName),
                 5, 80, 20);
-            loser.playSound(loser.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 0.8f);
+            loser.playSound(loser.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 0.7f);
             // Kaybeden hemen spawna
             teleportToSpawn(loser);
         }
@@ -4402,11 +4305,10 @@ public class LoginX extends JavaPlugin implements Listener {
         if (winner != null && winner.isOnline()) {
             winner.setWalkSpeed(0.2f); winner.setFlySpeed(0.1f);
             winner.sendTitle(
-                duelFlop("KAZANDIN!", true),
-                color("&#ffcc00&o" + loserName + " elendin!"),
+                duelFlop("Kazandın", true),
+                color(UI_SUB + loserName + " elendi"),
                 5, 100, 20);
             winner.playSound(winner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
-            winner.playSound(winner.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.5f);
 
             // 8sn geri sayım
             new BukkitRunnable() {
@@ -4416,20 +4318,17 @@ public class LoginX extends JavaPlugin implements Listener {
                     if (sec > 0) {
                         // Title'da geri sayım
                         winner.sendTitle(
-                            duelFlop("KAZANDIN!", true),
-                            color("&#00ccff⌛ &fSpawn'a ışınlanıyorsun: &e" + sec + " &fsaniye"),
+                            duelFlop("Kazandın", true),
+                            color(UI_SUB + "Spawn noktasına ışınlanmana " + UI_TEXT + sec + UI_SUB + " saniye"),
                             0, 25, 5);
-                        // Chatta da göster
-                        winner.sendMessage(color("  " + duelFlop("SPAWNA IŞINLANIYORSUN", false) + " &8— &e" + sec + " &fsaniye"));
                         winner.playSound(winner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.5f);
                         sec--;
                     } else {
                         cancel();
                         winner.sendTitle(
-                            duelFlop("⚡ SPAWNA IŞINLANDI! ⚡", true),
-                            color("&#aaaaaa&oİyi oyunlar!"),
+                            duelFlop("Işınlandın", true),
+                            color(UI_SUB + "İyi oyunlar"),
                             5, 50, 15);
-                        winner.sendMessage(color("  " + duelFlop("✦ Spawna ışınlandın!", true)));
                         teleportToSpawn(winner);
                     }
                 }
@@ -4530,18 +4429,18 @@ public class LoginX extends JavaPlugin implements Listener {
         if (recipient != null && recipient.isOnline()) {
             HashMap<Integer, ItemStack> leftover = new HashMap<>(recipient.getInventory().addItem(chest));
             if (leftover.isEmpty()) {
-                recipient.sendMessage(color("&#2266bb&l[DUEL] &f" + dead.getName() + " &7adlı oyuncunun eşyaları envanterine eklendi. &8(Sağ tıkla aç)"));
+                recipient.sendMessage(duel(hl(dead.getName()) + " oyuncusunun eşyaları sandık olarak envanterine eklendi."));
             } else {
                 ItemStack notFit = leftover.values().iterator().next();
                 HashMap<Integer, ItemStack> leftover2 = new HashMap<>(recipient.getEnderChest().addItem(notFit));
                 if (leftover2.isEmpty()) {
-                    recipient.sendMessage(color("&#2266bb&l[DUEL] &fEnvanterin doluydu, &f" + dead.getName() + " &7eşyaları Ender Chest'ine kondu."));
+                    recipient.sendMessage(duel("Envanterin doluydu. Eşyalar Ender Chest'ine kondu."));
                 } else {
                     for (ItemStack rem : leftover2.values()) {
                         org.bukkit.entity.Item it = recipient.getWorld().dropItem(recipient.getLocation(), rem);
                         it.setPickupDelay(0);
                     }
-                    recipient.sendMessage(color("&#ff4444&l[DUEL] &fEnvanterin ve Ender Chest'in dolu — sandık ayaklarının dibine bırakıldı!"));
+                    recipient.sendMessage(duelErr("Envanterin ve Ender Chest'in dolu. Sandık ayaklarının dibine bırakıldı."));
                 }
             }
             recipient.playSound(recipient.getLocation(), Sound.ENTITY_ITEM_PICKUP, 1f, 1f);
@@ -4566,19 +4465,14 @@ public class LoginX extends JavaPlugin implements Listener {
         ItemStack chest = new ItemStack(Material.CHEST, 1);
         ItemMeta im = chest.getItemMeta();
         // İsim kalın DEĞİL — sade, profesyonel tek ton
-        im.setDisplayName(color("&#4a90d9⚷ " + ownerName + " &#4a90d9Eşyaları"));
+        im.setDisplayName(color("&r" + UI_TEXT + ownerName + UI_SUB + " eşyaları"));
         List<String> lore = new ArrayList<>();
-        lore.add(color("&#4a4a5a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        lore.add(color("&#8fa3bd Bir düello sonucunda düşen eşyalar."));
-        lore.add(color("&#8fa3bd Bu sandık bu düellonun anısına"));
-        lore.add(color("&#8fa3bd senin için güvenle saklanıyor."));
+        lore.add(color("&r" + UI_SUB + "Duel sonucunda düşen eşyalar."));
         lore.add(color(""));
-        lore.add(color("&#6fa8dc Sahibi &#5a5a6a» &#c7d3e0" + ownerName));
-        lore.add(color("&#6fa8dc İçerik &#5a5a6a» &#c7d3e0" + count + " eşya"));
+        lore.add(color("&r" + UI_SUB + "Sahibi: " + UI_TEXT + ownerName));
+        lore.add(color("&r" + UI_SUB + "İçerik: " + UI_TEXT + count + " eşya"));
         lore.add(color(""));
-        lore.add(color("&#5fb87a▸ &#9aa5b5Açmak için sağ tıkla"));
-        lore.add(color("&#e0a95f▸ &#9aa5b5Yere konulamaz, gerçek bir sandık değildir"));
-        lore.add(color("&#4a4a5a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+        lore.add(color("&r" + UI_DIM + "Sağ tıkla aç. Yere konulamaz."));
         im.setLore(lore);
 
         im.getPersistentDataContainer().set(lootChestTag, PersistentDataType.BYTE, (byte) 1);
@@ -4642,12 +4536,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private ItemStack lootChestFillerItem() {
         ItemStack pane = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
         ItemMeta im = pane.getItemMeta();
-        im.setDisplayName(color("&#ff9ecb&lBoş"));
-        List<String> lore = new ArrayList<>();
-        lore.add(color("&#4a4a5a▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        lore.add(color("&#ff9ecbSilvera &fDüel Sandığı"));
-        lore.add(color("&#4a4a5a▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-        im.setLore(lore);
+        im.setDisplayName(" ");
         im.getPersistentDataContainer().set(lootChestFillerTag, PersistentDataType.BYTE, (byte) 1);
         pane.setItemMeta(im);
         return pane;
@@ -4664,7 +4553,7 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onManagedInvDrag(InventoryDragEvent e) {
         String title = ChatColor.stripColor(e.getView().getTitle());
         boolean managed = title.contains("Iade") || title.contains("Anahtar") || title.contains("Kasa")
-            || title.contains("Crate") || title.contains("Kasa Crate") || title.contains("Olum Detayi")
+            || title.contains("Olum Detayi")
             || title.contains("Kumar") || title.contains("Efekt Secimi") || title.contains("Bilgi Merkezi")
             || title.contains("Hile Kontrol") || title.contains("Duel Arenaları") || title.contains("Duel Ayarları")
             || title.contains("Duel Daveti")
@@ -4678,7 +4567,7 @@ public class LoginX extends JavaPlugin implements Listener {
         String data = chestItem.getItemMeta().getPersistentDataContainer().get(lootChestData, PersistentDataType.STRING);
         ItemStack[] contents = (data == null || data.isEmpty()) ? new ItemStack[41] : deserializeItems(data);
         // 45 slot (5 satır): 0-35 ana envanter, 36-39 zırh, 40 offhand — geri kalan slotlar dolgu cam
-        Inventory gui = Bukkit.createInventory(new LootChestHolder(slot), 45, duelFlop("Düel Sandığı", false));
+        Inventory gui = Bukkit.createInventory(new LootChestHolder(slot), 45, color(UI_SUB + "Duel Sandığı"));
         for (int i = 0; i < 45; i++) {
             ItemStack it = (i < 41 && i < contents.length) ? contents[i] : null;
             if (it != null && it.getType() != Material.AIR) {
@@ -4704,14 +4593,14 @@ public class LoginX extends JavaPlugin implements Listener {
             // Dolgu camı hiçbir şekilde alınamaz
             if (isLootChestFiller(clickedItem)) {
                 ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color("&#ff9ecb✖ &fBurası boş!"));
+                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_SUB + "Burası boş."));
                 return;
             }
             // Sandığa eşya koymaya yönelik her türlü aksiyonu engelle — sadece alma serbest
             switch (ev.getAction()) {
                 case PLACE_ALL, PLACE_SOME, PLACE_ONE, SWAP_WITH_CURSOR, HOTBAR_SWAP, HOTBAR_MOVE_AND_READD, UNKNOWN -> {
                     ev.setCancelled(true);
-                    if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color("&#ff4444✖ &fBu sandığa eşya koyamazsın!"));
+                    if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
                     return;
                 }
                 default -> { }
@@ -4728,7 +4617,7 @@ public class LoginX extends JavaPlugin implements Listener {
             // Alt envanter (oyuncu envanteri) tıklaması: shift-click ile sandığa eşya atmayı engelle
             if (ev.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY && clickedItem != null && clickedItem.getType() != Material.AIR) {
                 ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color("&#ff4444✖ &fBu sandığa eşya koyamazsın!"));
+                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
             }
         }
     }
@@ -4741,7 +4630,7 @@ public class LoginX extends JavaPlugin implements Listener {
         for (int rawSlot : ev.getRawSlots()) {
             if (rawSlot < topSize) {
                 ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color("&#ff4444✖ &fBu sandığa eşya koyamazsın!"));
+                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
                 return;
             }
         }
@@ -4752,7 +4641,7 @@ public class LoginX extends JavaPlugin implements Listener {
         // Duel sandığı gerçek bir sandık gibi yere konulamaz — dupe'a karşı en garanti önlem
         if (isLootChestItem(ev.getItemInHand())) {
             ev.setCancelled(true);
-            ev.getPlayer().sendActionBar(color("&#ff4444✖ &fBu sandık yere konulamaz, sağ tıkla aç!"));
+            ev.getPlayer().sendActionBar(color(UI_BAD + "Bu sandık yere konulamaz. Sağ tıkla aç."));
         }
     }
 
@@ -4830,22 +4719,15 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void openDuelListMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, color("&#0055cc&l⚔ Duel Arenaları"));
-        // Kenarlık koyu lacivert
-        ItemStack border = makeBorderGlass("&#0a0a1e");
+        Inventory inv = Bukkit.createInventory(null, 54, color(UI_SUB + "Duel Arenaları"));
+        ItemStack border = uiFiller();
         for (int i = 0; i < 54; i++) inv.setItem(i, border);
 
-        // Başlık — slot 4
-        ItemStack header = new ItemStack(Material.GOLDEN_SWORD); ItemMeta hm2 = header.getItemMeta();
-        hm2.setDisplayName(color("&#00aaff&l⚔ &r&#ffffff&lDuel Arenaları"));
-        hm2.setLore(Arrays.asList(
-            color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"),
-            color("  &#00ff88Yeşil &7= Boş   &#ff4444Kırmızı &7= Dolu"),
-            color("  &#ffcc00» Boş arenaya tıkla, ardından &b/1v1 <oyuncu>"),
-            color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")));
-        header.setItemMeta(hm2); inv.setItem(4, header);
+        inv.setItem(4, uiItem(Material.GOLDEN_SWORD, UI_TEXT + "Duel Arenaları",
+            UI_OK + "Yeşil" + UI_SUB + ": boş   " + UI_BAD + "Kırmızı" + UI_SUB + ": dolu   " + UI_WARN + "Sarı" + UI_SUB + ": hazırlanıyor",
+            "",
+            UI_SUB + "Boş bir arena seç, ardından " + UI_ACCENT + "/1v1 <oyuncu>" + UI_SUB + " ile davet gönder."));
 
-        // Arena slotları: 10-16, 19-25, 28-34, 37-43
         int[] arenaSlots = {10,11,12,13,14,15,16, 19,20,21,22,23,24,25, 28,29,30,31,32,33,34, 37,38,39,40,41,42,43};
         List<String> ids = new ArrayList<>(duelSpawn1.keySet());
         for (int i = 0; i < Math.min(ids.size(), arenaSlots.length); i++) {
@@ -4854,48 +4736,37 @@ public class LoginX extends JavaPlugin implements Listener {
             boolean hazir = duelSpawn1.get(did) != null && duelSpawn2.get(did) != null;
 
             Material mat = dolu ? Material.RED_STAINED_GLASS_PANE : (hazir ? Material.LIME_STAINED_GLASS_PANE : Material.YELLOW_STAINED_GLASS_PANE);
-            String renk = dolu ? "&#ff4444" : (hazir ? "&#00ff88" : "&#ffcc00");
-            ItemStack item = new ItemStack(mat); ItemMeta m = item.getItemMeta();
-            m.setDisplayName(color(renk + "⚔ Arena " + did));
-            List<String> l = new ArrayList<>();
-            l.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-            l.add(color("  &7Durum: " + (dolu ? "&#ff4444● Dolu" : (hazir ? "&#00ff88● Boş" : "&#ffcc00● Kuruluyor"))));
+            String renk = dolu ? UI_BAD : (hazir ? UI_OK : UI_WARN);
+            List<String> lore = new ArrayList<>();
+            lore.add(UI_SUB + "Durum: " + renk + (dolu ? "Dolu" : (hazir ? "Boş" : "Hazırlanıyor")));
             if (dolu) {
                 UUID[] dp = duelPlayers.get(did);
                 String n1 = Bukkit.getOfflinePlayer(dp[0]).getName();
                 String n2 = Bukkit.getOfflinePlayer(dp[1]).getName();
-                l.add(color("  &#ff6666" + n1 + " &8vs &#ff6666" + n2));
+                lore.add(UI_TEXT + (n1 != null ? n1 : "?") + UI_DIM + " vs " + UI_TEXT + (n2 != null ? n2 : "?"));
+            } else if (hazir) {
+                lore.add("");
+                lore.add(UI_DIM + "Seçmek için tıkla.");
             }
-            if (!dolu && hazir) {
-                l.add(color("  &#00ff88» &fTıkla → &e/1v1 <oyuncu> &file davet gönder!"));
-            }
-            l.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
-            l.add(color("&8DUEL_ID:" + did));
-            m.setLore(l); item.setItemMeta(m);
+            ItemStack item = uiItem(mat, renk + "Arena " + did, lore.toArray(new String[0]));
+            ItemMeta m = item.getItemMeta();
+            m.getPersistentDataContainer().set(duelGuiTag, PersistentDataType.STRING, "arena:" + did);
+            item.setItemMeta(m);
             inv.setItem(arenaSlots[i], item);
         }
-        // Kapat — 49
         inv.setItem(49, makeCloseHead(p));
         p.openInventory(inv);
     }
 
-    private ItemStack makeGreenGlass() {
-        ItemStack g = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
-        ItemMeta m = g.getItemMeta(); m.setDisplayName(" "); g.setItemMeta(m); return g;
-    }
+
 
     // toggleKey: web / ely / ladder / oak / stick / chest
     private ItemStack buildDuelToggleItem(String label, String toggleKey, Material onMat, Material offMat, boolean on, String desc) {
-        ItemStack it = new ItemStack(on ? onMat : offMat);
+        ItemStack it = uiItem(on ? onMat : offMat,
+            (on ? UI_OK : UI_BAD) + label + UI_DIM + ": " + duelRuleState(on),
+            UI_SUB + desc, "", UI_DIM + "Değiştirmek için tıkla.");
         ItemMeta m = it.getItemMeta();
-        m.setDisplayName(color((on ? "&#26d17f&l" : "&#e64545&l") + label + "&r " + (on ? "&#26d17fAçık" : "&#e64545Kapalı")));
-        m.setLore(Arrays.asList(
-            color("  &#3a3a4a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"),
-            color("  &#9aa0b0" + desc),
-            color("  " + (on ? "&#26d17f● Şu an: Açık" : "&#e64545● Şu an: Kapalı")),
-            color("  &#3a3a4a▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"),
-            color("  &#f5c542» Değiştirmek için tıkla"),
-            color("  &8DUEL_TOGGLE:" + toggleKey)));
+        m.getPersistentDataContainer().set(duelGuiTag, PersistentDataType.STRING, "toggle:" + toggleKey);
         it.setItemMeta(m);
         return it;
     }
@@ -4911,32 +4782,25 @@ public class LoginX extends JavaPlugin implements Listener {
         boolean chestOn  = chestMap.getOrDefault(uid, false);
 
         // Simetrik 2x3 — sol blok: web(19) ely(20) ladder(21) — sağ blok: oak(23) stick(24) chest(25)
-        inv.setItem(19, buildDuelToggleItem("Örümcek Ağı", "web",    Material.COBWEB,          Material.STRING,          webOn,    "Düelloda örümcek ağı kullanımı"));
-        inv.setItem(20, buildDuelToggleItem("Elytra",       "ely",    Material.ELYTRA,          Material.LEATHER_CHESTPLATE, elyOn, "Düelloda elytra kullanımı"));
-        inv.setItem(21, buildDuelToggleItem("Merdiven",     "ladder", Material.LADDER,          Material.BARRIER,         ladderOn, "Düelloda merdiven kullanımı"));
-        inv.setItem(23, buildDuelToggleItem("Meşe Odun",    "oak",    Material.OAK_LOG,         Material.BARRIER,         oakOn,    "Düelloda meşe odun kullanımı"));
-        inv.setItem(24, buildDuelToggleItem("Tahta",        "stick",  Material.SPRUCE_PLANKS,   Material.BARRIER,         stickOn,  "Düelloda tahta (meşe hariç) kullanımı"));
-        inv.setItem(25, buildDuelToggleItem("Göğüslük",     "chest",  Material.IRON_CHESTPLATE, Material.BARRIER,         chestOn,  "Düelloda göğüslük kullanımı"));
+        inv.setItem(19, buildDuelToggleItem("Örümcek Ağı", "web",    Material.COBWEB,          Material.STRING,          webOn,    "Duelde örümcek ağı kullanımı"));
+        inv.setItem(20, buildDuelToggleItem("Elytra",       "ely",    Material.ELYTRA,          Material.LEATHER_CHESTPLATE, elyOn, "Duelde elytra kullanımı"));
+        inv.setItem(21, buildDuelToggleItem("Merdiven",     "ladder", Material.LADDER,          Material.BARRIER,         ladderOn, "Duelde merdiven kullanımı"));
+        inv.setItem(23, buildDuelToggleItem("Meşe Odun",    "oak",    Material.OAK_LOG,         Material.BARRIER,         oakOn,    "Duelde meşe odun kullanımı"));
+        inv.setItem(24, buildDuelToggleItem("Tahta",        "stick",  Material.SPRUCE_PLANKS,   Material.BARRIER,         stickOn,  "Duelde tahta (meşe hariç) kullanımı"));
+        inv.setItem(25, buildDuelToggleItem("Göğüslük",     "chest",  Material.IRON_CHESTPLATE, Material.BARRIER,         chestOn,  "Duelde göğüslük kullanımı"));
     }
 
     // ─── /duelayarlar & /duelayarlaradmin — kişisel varsayılan ayarlar ───
     private void openDuelSettingsMenu(Player p, boolean isAdmin) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#1f6fd6&l⚔ &r&#ffffff&lDuel Ayarları &#1f6fd6&l⚔"));
-        ItemStack green = makeGreenGlass();
-        for (int i = 0; i < 45; i++) inv.setItem(i, green);
+        Inventory inv = Bukkit.createInventory(null, 45, color(UI_SUB + "Duel Ayarları"));
+        ItemStack filler = uiFiller();
+        for (int i = 0; i < 45; i++) inv.setItem(i, filler);
 
-        ItemStack header = new ItemStack(Material.NETHER_STAR); ItemMeta hm = header.getItemMeta();
-        hm.setDisplayName(color("&#39c5ff&l⚔ &r&#ffffff&lDuel Ayarları"));
-        hm.setLore(Arrays.asList(color("  &#9aa0b0Duellara katılma varsayılan ayarların"),
-            color("  &#9aa0b0Kapalı olan itemler dueldeyken kullanılamaz")));
-        header.setItemMeta(hm); inv.setItem(13, header);
+        inv.setItem(13, uiItem(Material.BOOK, UI_TEXT + "Duel Ayarları",
+            UI_SUB + "Davet gönderirken kullanılan varsayılan kurallar.",
+            UI_SUB + "Kapalı olan itemler duelde kullanılamaz."));
 
         fillDuelToggles(inv, p.getUniqueId(), duelWebEnabled, duelElyEnabled, duelLadderEnabled, duelOakEnabled, duelStickEnabled, duelChestEnabled);
-
-        ItemStack onay = new ItemStack(Material.LIME_DYE); ItemMeta om = onay.getItemMeta();
-        om.setDisplayName(color("&#26d17f&l✔ Ayarları Kaydet"));
-        om.setLore(Arrays.asList(color("  &#9aa0b0Ayarlar otomatik kaydedilir")));
-        onay.setItemMeta(om); inv.setItem(31, onay);
 
         inv.setItem(40, makeCloseHead(p));
         p.openInventory(inv);
@@ -4945,24 +4809,22 @@ public class LoginX extends JavaPlugin implements Listener {
 
     // ─── /duel <oyuncu> — davet göndermeden önce açılan ayar ekranı ───
     private void openDuelInviteMenu(Player p, Player target) {
-        Inventory inv = Bukkit.createInventory(null, 45,
-            color("&#1f6fd6&l⚔ &r&#ffffff&lDuel Daveti &#9aa0b0» &r&#ffcc00" + target.getName()));
-        ItemStack green = makeGreenGlass();
-        for (int i = 0; i < 45; i++) inv.setItem(i, green);
+        Inventory inv = Bukkit.createInventory(null, 45, color(UI_SUB + "Duel Daveti" + UI_DIM + " | " + UI_TEXT + target.getName()));
+        ItemStack filler = uiFiller();
+        for (int i = 0; i < 45; i++) inv.setItem(i, filler);
 
-        ItemStack header = new ItemStack(Material.NETHER_STAR); ItemMeta hm = header.getItemMeta();
-        hm.setDisplayName(color("&#39c5ff&l⚔ &r&#ffffff&l" + target.getName() + " &r&#9aa0b0kişisine davet"));
-        hm.setLore(Arrays.asList(color("  &#9aa0b0Kurallarını ayarla, sonra onayla"),
-            color("  &#9aa0b0Kapalı olan itemler dueldeyken kullanılamaz")));
-        header.setItemMeta(hm); inv.setItem(13, header);
+        inv.setItem(13, uiItem(Material.BOOK, UI_TEXT + target.getName() + UI_SUB + " oyuncusuna davet",
+            UI_SUB + "Kuralları ayarla, ardından daveti gönder.",
+            UI_SUB + "Kapalı olan itemler duelde kullanılamaz."));
 
         fillDuelToggles(inv, p.getUniqueId(), duelWebEnabled, duelElyEnabled, duelLadderEnabled, duelOakEnabled, duelStickEnabled, duelChestEnabled);
 
-        ItemStack onay = new ItemStack(Material.LIME_DYE); ItemMeta om = onay.getItemMeta();
-        om.setDisplayName(color("&#26d17f&l✔ Onayla ve Gönder"));
-        om.setLore(Arrays.asList(color("  &#9aa0b0Daveti " + target.getName() + " kişisine gönderir"),
-            color("  &8DUEL_INVITE_CONFIRM")));
-        onay.setItemMeta(om); inv.setItem(31, onay);
+        ItemStack send = uiItem(Material.LIME_DYE, UI_OK + "Daveti Gönder",
+            UI_SUB + "Daveti " + UI_TEXT + target.getName() + UI_SUB + " oyuncusuna gönderir.");
+        ItemMeta sm = send.getItemMeta();
+        sm.getPersistentDataContainer().set(duelGuiTag, PersistentDataType.STRING, "confirm");
+        send.setItemMeta(sm);
+        inv.setItem(31, send);
 
         inv.setItem(40, makeCloseHead(p));
         p.openInventory(inv);
@@ -5028,17 +4890,11 @@ public class LoginX extends JavaPlugin implements Listener {
             finalWinner.setWalkSpeed(0.2f); finalWinner.setFlySpeed(0.1f);
             // Tüm sunucuya duel sonucu
             for (Player on : Bukkit.getOnlinePlayers()) {
-                on.sendMessage(color(""));
-                on.sendMessage(color("  " + duelFlop("⚔ DUEL SONUCU ⚔", true)));
-                on.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                on.sendMessage(color("  &#ffcc00&lKazanan: &r&#ffffff&l" + finalWinner.getName()));
-                on.sendMessage(color("  &#ff4444&l☠ Kaybeden: &r&#aaaaaa" + loserName + " &7(çıktı)"));
-                on.sendMessage(color("  &#aaaaaa━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-                on.sendMessage(color(""));
+                on.sendMessage(duel(UI_OK + finalWinner.getName() + UI_TEXT + " duelde " + UI_BAD + loserName + UI_TEXT + " oyundan çıktığı için kazandı."));
             }
             finalWinner.sendTitle(
-                duelFlop("KAZANDIN!", true),
-                color("&#ff4444" + loserName + " &foyundan çıktı!"),
+                duelFlop("Kazandın", true),
+                color(UI_SUB + loserName + " oyundan çıktı"),
                 5, 80, 15);
             finalWinner.playSound(finalWinner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
             // 8sn geri sayım ile spawna
@@ -5047,13 +4903,13 @@ public class LoginX extends JavaPlugin implements Listener {
                 @Override public void run() {
                     if (!finalWinner.isOnline()) { cancel(); return; }
                     if (sec > 0) {
-                        finalWinner.sendTitle(duelFlop("KAZANDIN!", true),
-                            color("&#00ccff⌛ &fSpawn'a ışınlanıyorsun: &e" + sec + " &fsaniye"), 0, 25, 5);
+                        finalWinner.sendTitle(duelFlop("Kazandın", true),
+                            color(UI_SUB + "Spawn noktasına ışınlanmana " + UI_TEXT + sec + UI_SUB + " saniye"), 0, 25, 5);
                         finalWinner.playSound(finalWinner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.5f);
                         sec--;
                     } else {
                         cancel();
-                        finalWinner.sendTitle(duelFlop("⚡ SPAWNA IŞINLANDI! ⚡", true), color("&#aaaaaa&oİyi oyunlar!"), 5, 50, 15);
+                        finalWinner.sendTitle(duelFlop("Işınlandın", true), color(UI_SUB + "İyi oyunlar"), 5, 50, 15);
                         teleportToSpawn(finalWinner);
                     }
                 }
@@ -5090,10 +4946,10 @@ public class LoginX extends JavaPlugin implements Listener {
         // Kazanana bildirim + spawn
         if (winner != null && winner.isOnline()) {
             winner.sendTitle(
-                duelFlop("1v1 KAZANDIN!", true),
-                color("&#ff4444" + p.getName() + " &foyundan çıktı!"),
+                duelFlop("Kazandın", true),
+                color(UI_SUB + p.getName() + " oyundan çıktı"),
                 5, 60, 15);
-            winner.sendMessage(color("  " + duelFlop("1v1 KAZANDIN!", true) + " &#aaaaaa&o(" + p.getName() + " çıktı)"));
+            winner.sendMessage(duel("1v1 kazandın. " + hl(p.getName()) + " oyundan çıktı."));
             winner.playSound(winner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
             teleportToSpawn(winner);
         }
@@ -5125,7 +4981,7 @@ public class LoginX extends JavaPlugin implements Listener {
             if (allowedDuelCmd) return;
 
             evCmd.setCancelled(true);
-            p.sendMessage(color("  &#ff4444&l[DUEL] &fDuel sırasında sadece &e/duel berabere&f, &e/duelberaberekabul &fve &e/duelberaberereddet &fkomutlarını kullanabilirsin!"));
+            p.sendMessage(duelErr("Duel sırasında yalnızca " + hl("/duel berabere") + ", " + hl("/duelberaberekabul") + " ve " + hl("/duelberaberereddet") + " komutları kullanılabilir."));
             return;
         }
 
@@ -5137,7 +4993,7 @@ public class LoginX extends JavaPlugin implements Listener {
         }
         if (elapsed < DUEL_DEATH_LOCK_MS) {
             evCmd.setCancelled(true);
-            p.sendMessage(color("  &#ff4444&l[DUEL] &fBiraz bekle, komutlar birazdan açılacak!"));
+            p.sendMessage(duelErr("Komutlar kısa süre sonra açılacak."));
             return;
         }
 
@@ -5147,7 +5003,7 @@ public class LoginX extends JavaPlugin implements Listener {
         boolean allowed = cmd.equals("ec") || cmd.equals("pv") || fullCmd.startsWith("pv ");
         if (!allowed) {
             evCmd.setCancelled(true);
-            p.sendMessage(color("  &#ff4444&l[DUEL] &fÖldükten sonra sadece &e/ec &fve &e/pv &fkomutlarını kullanabilirsin!"));
+            p.sendMessage(duelErr("Ölümden sonra yalnızca " + hl("/ec") + " ve " + hl("/pv") + " komutları kullanılabilir."));
         }
     }
     /** Bir sender'ın belirli bir LoginX komutunu kullanıp kullanamayacağını kontrol eder.
@@ -5172,7 +5028,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private ItemStack buildKontItem(Player target) {
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta m = item.getItemMeta();
-        m.setDisplayName(color("&#ff0000&l⚠ HİLE KONTROL ⚠"));
+        m.setDisplayName(color("&#ff0000&lHİLE KONTROL"));
         // Lore sadece ince — bold yok
         List<String> l = new ArrayList<>();
         l.add(color("&#555555▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
@@ -5213,6 +5069,20 @@ public class LoginX extends JavaPlugin implements Listener {
             Player partner = Bukkit.getPlayer(partnerUid);
             if (partner != null) partner.sendMessage(color("&#aaaaaa&l[Hile Kontrol Sohbet] &7kapandı. Normal chate döndün."));
         }
+    }
+
+    /**
+     * Kontten çıkarılan oyuncuyu, eşya iadesi tamamlandıktan hemen sonra konsoldan hub komutuyla gönderir.
+     * Komut config.yml içindeki kont.hub-komutu ile değiştirilebilir; {oyuncu} oyuncu adıyla değişir.
+     */
+    private void sendReleasedPlayerToHub(UUID uid) {
+        Player target = Bukkit.getPlayer(uid);
+        if (target == null || !target.isOnline() || kontUntil.containsKey(uid)) return;
+        target.setWalkSpeed(0.2f);
+        target.setFlySpeed(0.1f);
+        String cmd = getConfig().getString("kont.hub-komutu", "hub {oyuncu}").replace("{oyuncu}", target.getName()).trim();
+        if (cmd.startsWith("/")) cmd = cmd.substring(1);
+        if (!cmd.isEmpty()) Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
     }
 
     private void cancelKontTimeout(UUID uid) {
@@ -5356,7 +5226,7 @@ public class LoginX extends JavaPlugin implements Listener {
             org.bukkit.NamespacedKey placeKey = new org.bukkit.NamespacedKey(this, "place_blocked");
             if (placed.getItemMeta().getPersistentDataContainer().has(placeKey, PersistentDataType.BYTE)) {
                 ev.setCancelled(true);
-                ev.getPlayer().sendActionBar(color("&#ff4444✖ &fBu item yere konulması engellendi."));
+                ev.getPlayer().sendActionBar(color("&#ff4444&fBu item yere konulması engellendi."));
                 return;
             }
         }
@@ -5377,8 +5247,8 @@ public class LoginX extends JavaPlugin implements Listener {
                 else if (mat.name().endsWith("_PLANKS") && mat != Material.OAK_PLANKS && !rules[4]) blocked = true;
                 if (blocked) {
                     ev.setCancelled(true);
-                    dPl.sendActionBar(color("&#ff4444✖ &fBu duelde bu item kapalı!"));
-                    dPl.playSound(dPl.getLocation(), Sound.ENTITY_VILLAGER_NO, 0.6f, 1f);
+                    dPl.sendActionBar(color(UI_BAD + "Bu duelde bu item kapalı."));
+                    dPl.playSound(dPl.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.6f, 0.8f);
                     return;
                 }
             }
@@ -5400,7 +5270,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 && ev.getRawSlot() == 6;
         if (isChest && (toArmorSlot || ev.isShiftClick())) {
             ev.setCancelled(true);
-            dPl.sendActionBar(color("&#ff4444✖ &fBu duelde göğüslük kapalı!"));
+            dPl.sendActionBar(color(UI_BAD + "Bu duelde göğüslük kapalı."));
         }
     }
 
@@ -5510,11 +5380,211 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
+    // ─────────────────────────────────────────────
+    //  ÇİFT ZIPLAMA
+    // ─────────────────────────────────────────────
+    private double doubleJumpCooldownSec() { return Math.max(0.0, getConfig().getDouble("ciftziplama.bekleme", 2.0)); }
+
+    private ItemStack createDoubleJumpWand() {
+        ItemStack axe = uiItem(Material.IRON_AXE, UI_TEXT + "Çift Zıplama Wand",
+            UI_SUB + "Sağ tık: " + UI_TEXT + "1. nokta",
+            UI_SUB + "Sol tık: " + UI_TEXT + "2. nokta",
+            "",
+            UI_DIM + "Ardından /ciftziplama olustur");
+        ItemMeta im = axe.getItemMeta();
+        im.getPersistentDataContainer().set(doubleJumpWandTag, PersistentDataType.BYTE, (byte) 1);
+        axe.setItemMeta(im);
+        return axe;
+    }
+
+    private void handleDoubleJumpCommand(Player p, String[] args) {
+        UUID id = p.getUniqueId();
+        String sub = args.length > 0 ? args[0].toLowerCase() : "";
+        switch (sub) {
+            case "" -> {
+                Map<Integer, ItemStack> left = p.getInventory().addItem(createDoubleJumpWand());
+                for (ItemStack rem : left.values()) p.getWorld().dropItem(p.getLocation(), rem);
+                p.sendMessage(uiMsg(DJ_TAG, "Wand envanterine eklendi. Sağ tık 1. nokta, sol tık 2. nokta; sonra " + hl("/ciftziplama olustur") + "."));
+                p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.8f, 1.2f);
+            }
+            case "olustur" -> {
+                Location l1 = jumpWandPos1.get(id), l2 = jumpWandPos2.get(id);
+                if (l1 == null || l2 == null) { p.sendMessage(uiErr(DJ_TAG, "Önce wand ile iki nokta seç.")); return; }
+                if (l1.getWorld() == null || !l1.getWorld().equals(l2.getWorld())) { p.sendMessage(uiErr(DJ_TAG, "İki nokta aynı dünyada olmalı.")); return; }
+                BoundingBox box = BoundingBox.of(l1.getBlock(), l2.getBlock());
+                jumpZones.add(new ElytraZone(l1.getWorld().getName(), box));
+                saveJumpZones(); saveConfig();
+                jumpWandPos1.remove(id); jumpWandPos2.remove(id);
+                p.sendMessage(uiMsg(DJ_TAG, "Bölge oluşturuldu. Toplam bölge: " + hl(String.valueOf(jumpZones.size()))
+                    + ". Alan: " + hl((int) box.getWidthX() + "x" + (int) box.getHeight() + "x" + (int) box.getWidthZ()) + ", üstünde 3 blok yükseklik dahil."));
+                p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.8f, 1.4f);
+            }
+            case "saniye" -> {
+                if (args.length < 2) { p.sendMessage(uiErr(DJ_TAG, "Kullanım: /ciftziplama saniye <süre>. Şu an: " + doubleJumpCooldownSec() + " sn")); return; }
+                double sec;
+                try { sec = Double.parseDouble(args[1].replace(",", ".")); }
+                catch (NumberFormatException ex) { p.sendMessage(uiErr(DJ_TAG, "Geçersiz süre.")); return; }
+                if (sec < 0.2 || sec > 60) { p.sendMessage(uiErr(DJ_TAG, "Süre 0.2 ile 60 saniye arasında olmalı.")); return; }
+                getConfig().set("ciftziplama.bekleme", sec); saveConfig();
+                p.sendMessage(uiMsg(DJ_TAG, "Bekleme süresi " + hl(sec + " saniye") + " olarak ayarlandı."));
+            }
+            case "sil" -> {
+                int before = jumpZones.size();
+                jumpZones.removeIf(z -> z.world.equals(p.getWorld().getName()) && jumpZoneContains(z, p.getLocation()));
+                int removed = before - jumpZones.size();
+                if (removed == 0) { p.sendMessage(uiErr(DJ_TAG, "Bulunduğun konumda bölge yok.")); return; }
+                saveJumpZones(); saveConfig();
+                p.sendMessage(uiMsg(DJ_TAG, hl(String.valueOf(removed)) + " bölge silindi."));
+            }
+            default -> p.sendMessage(uiErr(DJ_TAG, "Kullanım: /ciftziplama | olustur | saniye <süre> | sil"));
+        }
+    }
+
+    private boolean jumpZoneContains(ElytraZone z, Location l) {
+        BoundingBox b = z.box;
+        double y = l.getY() - 0.1;
+        return l.getX() >= b.getMinX() && l.getX() < b.getMaxX()
+            && l.getZ() >= b.getMinZ() && l.getZ() < b.getMaxZ()
+            && y >= b.getMinY() && y < b.getMaxY() + 3;
+    }
+
+    private boolean inJumpZone(Location l) {
+        if (l == null || l.getWorld() == null) return false;
+        for (ElytraZone z : jumpZones) {
+            if (z.world.equals(l.getWorld().getName()) && jumpZoneContains(z, l)) return true;
+        }
+        return false;
+    }
+
+    private boolean djEligibleMode(Player p) {
+        return p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.ADVENTURE;
+    }
+
+    /** Bölge içindeyse uçuş iznini (çift zıplama tetikleyicisi) açar, dışındaysa geri alır. */
+    private void refreshDoubleJump(Player p, Location at) {
+        UUID id = p.getUniqueId();
+        boolean inside = djEligibleMode(p) && inJumpZone(at);
+        if (inside) {
+            if (doubleJumpEnabled.contains(id)) return;
+            if (p.getAllowFlight()) return; // başka bir sistemin uçuş izni, dokunma
+            if (doubleJumpReadyAt.getOrDefault(id, 0L) > System.currentTimeMillis()) return; // bekleme görevi açacak
+            p.setAllowFlight(true);
+            doubleJumpEnabled.add(id);
+        } else if (doubleJumpEnabled.remove(id)) {
+            p.setFlying(false);
+            p.setAllowFlight(false);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onDoubleJumpWandUse(PlayerInteractEvent e) {
+        if (e.getHand() != null && e.getHand() != EquipmentSlot.HAND) return;
+        Player p = e.getPlayer();
+        ItemStack item = p.getInventory().getItemInMainHand();
+        if (item.getType() != Material.IRON_AXE || !item.hasItemMeta()
+            || !item.getItemMeta().getPersistentDataContainer().has(doubleJumpWandTag, PersistentDataType.BYTE)) return;
+        if (e.getClickedBlock() == null) return;
+        Action act = e.getAction();
+        if (act != Action.RIGHT_CLICK_BLOCK && act != Action.LEFT_CLICK_BLOCK) return;
+        e.setCancelled(true);
+        if (!p.hasPermission("loginx.admin")) return;
+        Location clicked = e.getClickedBlock().getLocation();
+        boolean first = act == Action.RIGHT_CLICK_BLOCK;
+        (first ? jumpWandPos1 : jumpWandPos2).put(p.getUniqueId(), clicked);
+        p.sendMessage(uiMsg(DJ_TAG, (first ? "1." : "2.") + " nokta seçildi: "
+            + hl(clicked.getBlockX() + ", " + clicked.getBlockY() + ", " + clicked.getBlockZ())));
+        p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.8f, first ? 1.2f : 1.5f);
+    }
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onDoubleJumpToggle(PlayerToggleFlightEvent e) {
+        Player p = e.getPlayer();
+        UUID id = p.getUniqueId();
+        if (!e.isFlying() || !doubleJumpEnabled.contains(id)) return;
+        e.setCancelled(true);
+        p.setFlying(false);
+        long now = System.currentTimeMillis();
+        if (!djEligibleMode(p) || !inJumpZone(p.getLocation()) || doubleJumpReadyAt.getOrDefault(id, 0L) > now) return;
+
+        Vector dir = p.getLocation().getDirection();
+        dir.setY(0);
+        if (dir.lengthSquared() > 1.0E-4) dir.normalize(); else dir.zero();
+        double horizontal = getConfig().getDouble("ciftziplama.yatay-hiz", 0.6);
+        double vertical   = getConfig().getDouble("ciftziplama.dikey-hiz", 0.6);
+        p.setVelocity(dir.multiply(horizontal).setY(vertical));
+        p.setFallDistance(0f);
+        p.getWorld().playSound(p.getLocation(), Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1f, 1f);
+
+        long ms = (long) (doubleJumpCooldownSec() * 1000);
+        doubleJumpReadyAt.put(id, now + ms);
+        doubleJumpEnabled.remove(id);
+        p.setAllowFlight(false);
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (p.isOnline()) refreshDoubleJump(p, p.getLocation());
+        }, ms / 50 + 2);
+    }
+
+    @EventHandler
+    public void onDoubleJumpMove(PlayerMoveEvent e) {
+        Location f = e.getFrom(), t = e.getTo();
+        if (t == null || (f.getBlockX() == t.getBlockX() && f.getBlockY() == t.getBlockY() && f.getBlockZ() == t.getBlockZ())) return;
+        if (jumpZones.isEmpty() && doubleJumpEnabled.isEmpty()) return;
+        refreshDoubleJump(e.getPlayer(), t);
+    }
+
+    @EventHandler
+    public void onDoubleJumpTeleport(PlayerTeleportEvent e) {
+        if (e.getTo() == null || (jumpZones.isEmpty() && doubleJumpEnabled.isEmpty())) return;
+        refreshDoubleJump(e.getPlayer(), e.getTo());
+    }
+
+    @EventHandler
+    public void onDoubleJumpGameMode(PlayerGameModeChangeEvent e) {
+        doubleJumpEnabled.remove(e.getPlayer().getUniqueId()); // uçuş iznini oyun modu belirler
+    }
+
+    @EventHandler
+    public void onDoubleJumpQuit(PlayerQuitEvent e) {
+        UUID id = e.getPlayer().getUniqueId();
+        if (doubleJumpEnabled.remove(id)) { e.getPlayer().setFlying(false); e.getPlayer().setAllowFlight(false); }
+        doubleJumpReadyAt.remove(id);
+        jumpWandPos1.remove(id); jumpWandPos2.remove(id);
+    }
+
+    private void saveJumpZones() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (ElytraZone z : jumpZones) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("world", z.world);
+            m.put("minx", z.box.getMinX()); m.put("miny", z.box.getMinY()); m.put("minz", z.box.getMinZ());
+            m.put("maxx", z.box.getMaxX()); m.put("maxy", z.box.getMaxY()); m.put("maxz", z.box.getMaxZ());
+            list.add(m);
+        }
+        getConfig().set("ciftziplamabolgeleri", list);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadJumpZones() {
+        jumpZones.clear();
+        List<?> raw = getConfig().getList("ciftziplamabolgeleri");
+        if (raw == null) return;
+        for (Object o : raw) {
+            if (!(o instanceof Map)) continue;
+            Map<String, Object> m = (Map<String, Object>) o;
+            try {
+                jumpZones.add(new ElytraZone((String) m.get("world"), new BoundingBox(
+                    ((Number) m.get("minx")).doubleValue(), ((Number) m.get("miny")).doubleValue(), ((Number) m.get("minz")).doubleValue(),
+                    ((Number) m.get("maxx")).doubleValue(), ((Number) m.get("maxy")).doubleValue(), ((Number) m.get("maxz")).doubleValue())));
+            } catch (Exception ignored) {}
+        }
+    }
+
     private void loadData() {
         crates.clear(); crateItems.clear(); crateEffects.clear(); crateChances.clear(); crateEffectType.clear();
         crateColorOverride.clear();
         removeAllHolograms();
         loadArenaZones();
+        loadJumpZones();
 
         // Küfür/spam uyarı renkleri
         kufurUyariRengi = "&" + getConfig().getString("kufur.uyari-rengi", "#d6a45c");
@@ -5589,7 +5659,7 @@ public class LoginX extends JavaPlugin implements Listener {
             boolean[] rules = duelArenaRules.get(dArena);
             if (rules != null && !rules[1]) {
                 e.setCancelled(true);
-                p.sendActionBar(color("&#ff4444✖ &fBu duelde elytra kapalı!"));
+                p.sendActionBar(color(UI_BAD + "Bu duelde elytra kapalı."));
                 return;
             }
         }
@@ -5620,7 +5690,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (now - last < 2000) return; // 2 saniyede bir mesaj — spam engeli
         elytraZoneWarnCooldown.put(p.getUniqueId(), now);
         p.sendMessage(silveraPrefix() + "Arena Bölgesinde Elytra Kullanamazsın!");
-        p.sendActionBar(color("&#8a8a8a✖ &fBu bölgede elytra süzülemez!"));
+        p.sendActionBar(color("&#8a8a8a&fBu bölgede elytra süzülemez!"));
     }
 
     /**
@@ -5742,7 +5812,7 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void openIzinMenu(Player admin) {
-        Inventory inv = Bukkit.createInventory(null, 27, color("&#ffcc00&l⚙ İzin Yönetimi"));
+        Inventory inv = Bukkit.createInventory(null, 27, color("&#ffcc00&lİzin Yönetimi"));
         ItemStack fill = makeBorderGlass("&#1a1a00");
         for (int i = 0; i < 27; i++) inv.setItem(i, fill);
         // Online oyuncuları listele
@@ -5772,7 +5842,7 @@ public class LoginX extends JavaPlugin implements Listener {
         String cmd = e.getMessage().toLowerCase().trim().substring(1).split(" ")[0];
         if (!KONT_ALLOWED_CMDS.contains(cmd)) {
             e.setCancelled(true);
-            p.sendMessage(color("&#ff4444&l⚠ &fKont altındayken sadece &e/itiraf &f/ &b/anydesk &f/ &9/discord2 &fkomutlarını kullanabilirsin!"));
+            p.sendMessage(color("&#ff4444&l&fKont altındayken sadece &e/itiraf &f/ &b/anydesk &f/ &9/discord2 &fkomutlarını kullanabilirsin!"));
         }
     }
 
@@ -5879,7 +5949,7 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void openKontMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 27, color("&#ff0000&l⚠ Hile Kontrol Menüsü ⚠"));
+        Inventory inv = Bukkit.createInventory(null, 27, color("&#ff0000&lHile Kontrol Menüsü"));
         // Kenarlık
         ItemStack fill = makeBorderGlass("&#330000");
         for (int i = 0; i < 27; i++) inv.setItem(i, fill);
@@ -5945,7 +6015,7 @@ public class LoginX extends JavaPlugin implements Listener {
             ev.setCancelled(true);
             Player p = ev.getPlayer();
             p.sendTitle(color("&#ff9ecb&lSilvera"), color("&fBunu İçemezsin!"), 5, 40, 10);
-            p.sendActionBar(color("&#ff9ecb✖ &fBunu İçemezsin!"));
+            p.sendActionBar(color("&#ff9ecb&fBunu İçemezsin!"));
         }
     }
 
