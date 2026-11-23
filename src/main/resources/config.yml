@@ -15,8 +15,8 @@ kufur:
 # yatay-hiz / dikey-hiz: sıçrama gücü, sunucuda deneyerek ayarla
 ciftziplama:
   bekleme: 2.0
-  yatay-hiz: 0.6
-  dikey-hiz: 0.6
+  yatay-hiz: 1.1
+  dikey-hiz: 0.42
 
 # --- KONT ---
 # /kontcikar işlemi bittikten (eşyalar iade edildikten) hemen sonra konsoldan çalıştırılır.
