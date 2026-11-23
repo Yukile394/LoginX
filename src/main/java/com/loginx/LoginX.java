@@ -1465,6 +1465,8 @@ public class LoginX extends JavaPlugin implements Listener {
         Location loc = crates.get(crateName);
         if (loc == null || loc.getWorld() == null) return;
 
+        removeStrayCrateHolograms(loc);
+
         List<Integer> ids = new ArrayList<>();
         String nameLine = buildHologramLine(crateName);
 
@@ -1486,6 +1488,21 @@ public class LoginX extends JavaPlugin implements Listener {
         return color(sb.toString());
     }
 
+    /**
+     * Eski sürümden dünyada kalmış hologram armor stand'larını (sağ/sol tık satırları ve yinelenen başlıklar) siler.
+     * Yalnızca kasanın hemen üstündeki, görünmez, marker ve adı "Kasası" / "sağ tıkla" / "sol tıkla" içeren stand'lara bakar.
+     */
+    private void removeStrayCrateHolograms(Location crate) {
+        if (crate.getWorld() == null) return;
+        Location center = crate.clone().add(0.5, 1.3, 0.5);
+        for (Entity en : crate.getWorld().getNearbyEntities(center, 1.0, 1.6, 1.0)) {
+            if (!(en instanceof ArmorStand as) || as.isVisible() || !as.isMarker() || as.getCustomName() == null) continue;
+            String n = ChatColor.stripColor(as.getCustomName());
+            if (n == null) continue;
+            if (n.contains("Kasası") || n.contains("sağ tıkla") || n.contains("sol tıkla")) as.remove();
+        }
+    }
+
     private void spawnTextStand(Location base, double yOffset, String text, List<Integer> ids) {
         Location spawnLoc = base.clone().add(0.5, yOffset, 0.5);
         ArmorStand stand = (ArmorStand) base.getWorld().spawnEntity(spawnLoc, EntityType.ARMOR_STAND);
@@ -1495,6 +1512,7 @@ public class LoginX extends JavaPlugin implements Listener {
         stand.setCustomName(text);
         stand.setSmall(true);
         stand.setMarker(true);
+        stand.setPersistent(false); // restart sonrası dünyada kalmasın
         ids.add(stand.getEntityId());
     }
 
@@ -1556,6 +1574,7 @@ public class LoginX extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         if (activeSessions.containsKey(p.getUniqueId())) return;
 
+        if (e.getAction() == Action.LEFT_CLICK_BLOCK) { openCratePreview(p, activeCrate); return; }
         if (e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
         ItemStack inHand = p.getInventory().getItemInMainHand();
@@ -3211,6 +3230,38 @@ public class LoginX extends JavaPlugin implements Listener {
             + UI_TEXT + itemName + tone + " kazandın.");
     }
 
+    // ─────────────────────────────────────────────
+    //  KASA ÖNİZLEME — Şans → Çıkma Şansı
+    // ─────────────────────────────────────────────
+    private void openCratePreview(Player p, String crateName) {
+        String title = color("&7Kasa Crate");
+        Inventory inv = Bukkit.createInventory(null, 45, title);
+        String[] clr = getCrateColors(crateName);
+        for (int i = 0; i < 45; i++)
+            if (i < 9 || i > 35 || i % 9 == 0 || i % 9 == 8) inv.setItem(i, makeBorderGlass(clr[i % clr.length]));
+
+        List<ItemStack> items   = crateItems.getOrDefault(crateName, new ArrayList<>());
+        List<Float>     chances = crateChances.getOrDefault(crateName, new ArrayList<>());
+        int slot = 10;
+        for (int idx = 0; idx < items.size(); idx++) {
+            if (slot % 9 == 8) slot += 2;
+            if (slot > 34) break;
+            ItemStack display = items.get(idx).clone();
+            ItemMeta  dm      = display.getItemMeta();
+            if (dm == null) { display.setItemMeta(Bukkit.getItemFactory().getItemMeta(display.getType())); dm = display.getItemMeta(); }
+            float ch = (idx < chances.size()) ? chances.get(idx) : 10.0f;
+            // Mevcut lore varsa koru, yoksa boş liste
+            List<String> l = dm.hasLore() ? new ArrayList<>(dm.getLore()) : new ArrayList<>();
+            l.add(color("&8▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+            l.add(color("&7• Çıkma Şansı: &f%" + ch));
+            l.add(color("&7• Nadirlik: " + getRarityName(ch)));
+            dm.setLore(l); display.setItemMeta(dm);
+            inv.setItem(slot++, display);
+        }
+        inv.setItem(40, makeCloseHead(p));
+        p.openInventory(inv);
+    }
+
     private ItemStack makeCloseHead(Player p) {
         ItemStack head = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta sm = (SkullMeta) head.getItemMeta();
@@ -3237,6 +3288,8 @@ public class LoginX extends JavaPlugin implements Listener {
         il.add(color("    &#aaaaaa&oFear Craft için geliştirilmiştir"));
         il.add(color(""));
         il.add(color("  &#334466▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+        il.add(color("  &#00ff88&fKasaları &b&lsağ tıkla &file aç"));
+        il.add(color("  &#00ff88&fKasaları &b&lsol tıkla &fönizle"));
         il.add(color("  &#00ff88&fHer kasanın kendine özel anahtarı var"));
         il.add(color("  &#00ff88&f&lKey All &rherhangi bir kasayı açar"));
         il.add(color("  &#00ff88&fŞans ayarla: &e/kasasansayarla"));
@@ -3466,7 +3519,11 @@ public class LoginX extends JavaPlugin implements Listener {
             UI_SUB + "Gün: " + UI_TEXT + currentDay + UI_SUB + " / " + DAILY_REWARD_TOTAL_DAYS,
             status,
             "",
-            UI_SUB + DAILY_REWARD_TOTAL_DAYS + ". günden sonra döngü başa döner."));
+            UI_SUB + "Her gün giriş yapıp sıradaki ödülünü alabilirsin.",
+            UI_SUB + "Günler sırayla açılır, birini atlayamazsın.",
+            UI_SUB + "Her ödülden sonra 20 saat beklemen gerekir.",
+            "",
+            UI_SUB + DAILY_REWARD_TOTAL_DAYS + ". günün ödülünü alınca döngü baştan başlar."));
 
         int[] daySlots = {10, 11, 12, 13, 14, 15, 16};
         for (int day = 1; day <= DAILY_REWARD_TOTAL_DAYS; day++) {
@@ -3510,6 +3567,20 @@ public class LoginX extends JavaPlugin implements Listener {
 
         List<String> lore = new ArrayList<>();
         lore.add(status);
+        lore.add("");
+        if (day < currentDay) {
+            lore.add(UI_SUB + "Bu günün ödülünü aldın.");
+        } else if (day == currentDay && availableToday) {
+            lore.add(UI_SUB + "Ödülün hazır. Tıkladığında anahtarlar");
+            lore.add(UI_SUB + "doğrudan envanterine eklenir.");
+        } else if (day == currentDay) {
+            lore.add(UI_SUB + "Önceki ödülü yeni aldın. Süre dolunca");
+            lore.add(UI_SUB + "bu menüden bunu da alabilirsin.");
+        } else {
+            lore.add(UI_SUB + "Bu güne gelmek için önceki günlerin");
+            lore.add(UI_SUB + "ödüllerini almış olman gerekiyor.");
+        }
+        if (isLastDay) lore.add(UI_SUB + "Son gün. Aldıktan sonra Gün 1'e dönersin.");
         lore.add("");
         lore.add(UI_SUB + "Ödül");
         for (Map.Entry<String, Integer> ent : contents.entrySet()) {
@@ -3650,7 +3721,7 @@ public class LoginX extends JavaPlugin implements Listener {
         // Stash'e item koymaya izin ver — cancel etme
         if (title.contains("Stash")) return;
         boolean managed = title.contains("Iade") || title.contains("Anahtar") || title.contains("Kasa")
-            || title.contains("Olum Detayi")
+            || title.contains("Crate") || title.contains("Olum Detayi")
             || title.contains("Kumar") || title.contains("Efekt Secimi") || title.contains("Bilgi Merkezi")
             || title.contains("Hile Kontrol") || title.contains("Duel Arenaları") || title.contains("Duel Ayarları")
             || title.contains("Duel Daveti")
@@ -4553,7 +4624,7 @@ public class LoginX extends JavaPlugin implements Listener {
     public void onManagedInvDrag(InventoryDragEvent e) {
         String title = ChatColor.stripColor(e.getView().getTitle());
         boolean managed = title.contains("Iade") || title.contains("Anahtar") || title.contains("Kasa")
-            || title.contains("Olum Detayi")
+            || title.contains("Crate") || title.contains("Olum Detayi")
             || title.contains("Kumar") || title.contains("Efekt Secimi") || title.contains("Bilgi Merkezi")
             || title.contains("Hile Kontrol") || title.contains("Duel Arenaları") || title.contains("Duel Ayarları")
             || title.contains("Duel Daveti")
@@ -5509,8 +5580,8 @@ public class LoginX extends JavaPlugin implements Listener {
         Vector dir = p.getLocation().getDirection();
         dir.setY(0);
         if (dir.lengthSquared() > 1.0E-4) dir.normalize(); else dir.zero();
-        double horizontal = getConfig().getDouble("ciftziplama.yatay-hiz", 0.6);
-        double vertical   = getConfig().getDouble("ciftziplama.dikey-hiz", 0.6);
+        double horizontal = getConfig().getDouble("ciftziplama.yatay-hiz", 1.1);
+        double vertical   = getConfig().getDouble("ciftziplama.dikey-hiz", 0.42);
         p.setVelocity(dir.multiply(horizontal).setY(vertical));
         p.setFallDistance(0f);
         p.getWorld().playSound(p.getLocation(), Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1f, 1f);
