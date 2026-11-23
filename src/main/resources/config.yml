@@ -10,6 +10,20 @@ kufur:
   uyari-rengi: "#d6a45c"
   mute-rengi: "#ff4444"
 
+# --- ÇİFT ZIPLAMA ---
+# bekleme: saniye (/ciftziplama saniye <süre> ile de değişir)
+# yatay-hiz / dikey-hiz: sıçrama gücü, sunucuda deneyerek ayarla
+ciftziplama:
+  bekleme: 2.0
+  yatay-hiz: 0.6
+  dikey-hiz: 0.6
+
+# --- KONT ---
+# /kontcikar işlemi bittikten (eşyalar iade edildikten) hemen sonra konsoldan çalıştırılır.
+# {oyuncu} yerine kontten çıkarılan oyuncunun adı yazılır. Başındaki / isteğe bağlıdır.
+kont:
+  hub-komutu: "hub {oyuncu}"
+
 # --- KASA / HOLOGRAM VERİLERİ ---
 # Buradan sonrası plugin tarafından otomatik yönetilir (crates, crateColors, kontyeri,
 # kontyetkili, izinli, vb.) — elle düzenlemeniz gerekmez, /kasarenkayarla ve diğer
