@@ -4,7 +4,7 @@ main: com.loginx.LoginX
 api-version: '1.21'
 
 depend: [Citizens]
-softdepend: [LuckPerms]
+softdepend: [LuckPerms, SimpleClans]
 
 commands:
   kasaayarla:
@@ -196,3 +196,16 @@ commands:
   kitkasasi:
     description: Tek seferlik Kit Kasası ödülünü al (alternatif yazım)
     usage: /kitkasasi
+
+  esyadusmewand:
+    permission: loginx.admin
+    description: Eşya düşme bölgesi baltasını verir
+    usage: /esyadusmewand
+  esyadusmeolustur:
+    permission: loginx.admin
+    description: Seçilen bölgede eşya düşme sistemini aktif eder
+    usage: /esyadusmeolustur
+  esyadusmesil:
+    permission: loginx.admin
+    description: Eşya düşme bölgesini siler
+    usage: /esyadusmesil <id>

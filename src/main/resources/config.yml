@@ -24,6 +24,39 @@ ciftziplama:
 kont:
   hub-komutu: "hub {oyuncu}"
 
+# --- EŞYA DÜŞMEME ---
+# dunya: bu dünyada ölünce eşya düşmez. Sadece /esyadusmeolustur ile tanımlanan bölgelerde düşer.
+esyadusme:
+  dunya: "mc.minerya.tc"
+
+# --- 1V1 ROOM ---
+# hub-komutu: düello bitince/oyuncu atılınca konsoldan çalışır ({oyuncu} = oyuncu adı)
+# bitis-bekleme: kazananın lobiye gitmeden önceki bekleme süresi (saniye)
+oda:
+  hub-komutu: "hub {oyuncu}"
+  bitis-bekleme: 5
+
+# --- OYUNCU İSİM HUD ---
+# y-offset: yükseklik, olcek: yazı boyutu, guncelleme-tick: yenileme hızı
+# klan.renkler: yavaş geçiş yapan renkler (hex), klan.hiz: küçük = daha yavaş
+# klan.gosterim: isim | tag
+hud:
+  aktif: true
+  textshadow: true
+  y-offset: 0.42
+  olcek: 1.0
+  guncelleme-tick: 4
+  duvar-arkasi: false
+  prefix-goster: true
+  isim-rengi: "#ffffff"
+  vanilla-isim-gizle: true
+  klan:
+    gosterim: "isim"
+    kalin: true
+    hiz: 0.012
+    yayilim: 0.09
+    renkler: ["#5ec8ff", "#8f7bff", "#ff7ad9", "#ffb86b"]
+
 # --- KASA / HOLOGRAM VERİLERİ ---
 # Buradan sonrası plugin tarafından otomatik yönetilir (crates, crateColors, kontyeri,
 # kontyetkili, izinli, vb.) — elle düzenlemeniz gerekmez, /kasarenkayarla ve diğer
