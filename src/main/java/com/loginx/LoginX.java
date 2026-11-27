@@ -95,17 +95,10 @@ public class LoginX extends JavaPlugin implements Listener {
     private final HashMap<UUID, Double> itemCooldownSpeed = new HashMap<>();
     private NamespacedKey cooldownSpeedTag;
 
-    // ─── 1v1 Ayarla Sistemi (eski - kaldırıldı, /1v1randomsil ile silinir) ───
+    // ─── 1v1 Room (Ayarla) Sistemi — kalıcı, sürekli aktif, kilitlenmez (motor: "1v1 ROOM MOTORU" bölümü) ───
     private final HashMap<UUID, Location>      ayarlaPos1        = new HashMap<>();
     private final HashMap<UUID, Location>      ayarlaPos2        = new HashMap<>();
-    private final HashMap<String, UUID>        ayarlaArenas      = new HashMap<>();
-    private final HashMap<String, BoundingBox> ayarlaBounds      = new HashMap<>();
-    private final HashMap<String, UUID[]>      ayarlaQueue       = new HashMap<>();
-    private final HashMap<UUID, String>        playerAyarlaArena = new HashMap<>();
-    private final HashMap<UUID, ItemStack>     ayarlaItem1       = new HashMap<>();
-    private final HashMap<UUID, ItemStack>     ayarlaItem2       = new HashMap<>();
-    private final HashMap<String, ItemStack[]> ayarlaWalls       = new HashMap<>();
-    private final HashMap<String, Map<String, Material>> ayarlaOriginalBlocks = new HashMap<>(); // arenaId -> konum->eski blok
+    private final HashMap<UUID, String>        playerAyarlaArena = new HashMap<>(); // yalnızca düellodaki (aktif/bitiş) oyuncular
 
     // ─── DUEL Sistemi ───
     // DuelArena: id, spawn1, spawn2, dolu mu
@@ -424,6 +417,7 @@ public class LoginX extends JavaPlugin implements Listener {
             }
         }.runTaskTimer(this, 0L, 60L); // her 3 saniyede bir
 
+        initExtras();
         getLogger().info("Fear Craft LoginX V2.0 Aktif!");
     }
 
@@ -436,6 +430,7 @@ public class LoginX extends JavaPlugin implements Listener {
             if (dp != null) { dp.setFlying(false); dp.setAllowFlight(false); }
         }
         doubleJumpEnabled.clear();
+        shutdownExtras();
         saveData();
     }
 
@@ -445,6 +440,7 @@ public class LoginX extends JavaPlugin implements Listener {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         String cmdName = cmd.getName().toLowerCase();
+        if (cmdName.startsWith("esyadusme")) return handleNoDropCommand(sender, cmdName, args);
 
         // Koruma komutları — tüm oyuncular kullanabilir
         if (cmdName.equals("korumasurem")) {
@@ -516,18 +512,14 @@ public class LoginX extends JavaPlugin implements Listener {
             return true;
         }
 
-        // /1v1randomsil (isim) — ayarla arenasını sil
+        // /1v1randomsil (isim) — 1v1 Room arenasını sil
         if (cmdName.equals("1v1randomsil")) {
             if (!(sender instanceof Player p)) return true;
             if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
-            if (args.length < 1) { p.sendMessage(color("&cKullanim: /1v1randomsil <arenaId>")); return true; }
+            if (args.length < 1) { p.sendMessage(roomErr("Kullanım: " + hl("/1v1randomsil <arenaId>"))); return true; }
             String id = args[0];
-            if (!ayarlaArenas.containsKey(id)) { p.sendMessage(color("&cArena bulunamadı: " + id)); return true; }
-            ayarlaArenas.remove(id); ayarlaBounds.remove(id);
-            ayarlaQueue.remove(id); ayarlaWalls.remove(id);
-            for (UUID uid2 : new HashSet<>(playerAyarlaArena.keySet()))
-                if (id.equals(playerAyarlaArena.get(uid2))) playerAyarlaArena.remove(uid2);
-            p.sendMessage(color("&#ff4444&l1v1 &8» &f" + id + " &c1v1 arenası silindi."));
+            if (!roomDelete(id)) { p.sendMessage(roomErr("Arena bulunamadı: " + hl(id))); return true; }
+            p.sendMessage(roomMsg(hl(id) + " arenası silindi."));
             return true;
         }
 
@@ -1716,9 +1708,286 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // ─────────────────────────────────────────────
-    //  1v1 AYARLA WAND ETKİLEŞİM
-    // ─────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════
+    //  1v1 ROOM MOTORU
+    //  - Odalar config'e kaydedilir (restart sonrası kaybolmaz)
+    //  - Tek bir zamanlayıcı tüm odaları yönetir (giriş/çıkış/başlangıç/bitiş)
+    //  - Durum makinesi: BEKLEME -> AKTİF -> BİTİŞ -> BEKLEME (her zaman geri döner)
+    //  - Her durumda odada yalnızca 2 oyuncu kalır
+    // ═════════════════════════════════════════════════════════════════════
+    private static final int ROOM_WAIT = 0, ROOM_ACTIVE = 1, ROOM_ENDING = 2;
+
+    private static class Room {
+        final String id, world;
+        final int minX, minY, minZ, maxX, maxY, maxZ;
+        final BoundingBox box;
+        int state = ROOM_WAIT;
+        final LinkedHashSet<UUID> inside = new LinkedHashSet<>();
+        final HashMap<UUID, Integer> outTicks = new HashMap<>();
+        final List<Location> glass = new ArrayList<>();
+        UUID a, b, winner;
+        long startedAt, endAt;
+        int lastSec = -1;
+
+        Room(String id, String world, int x1, int y1, int z1, int x2, int y2, int z2) {
+            this.id = id; this.world = world;
+            minX = Math.min(x1, x2); maxX = Math.max(x1, x2);
+            minY = Math.min(y1, y2); maxY = Math.max(y1, y2);
+            minZ = Math.min(z1, z2); maxZ = Math.max(z1, z2);
+            box = new BoundingBox(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+        }
+        UUID opponentOf(UUID u) { if (u == null) return null; if (u.equals(a)) return b; if (u.equals(b)) return a; return null; }
+        boolean isDueler(UUID u) { return u != null && (u.equals(a) || u.equals(b)); }
+    }
+
+    private final LinkedHashMap<String, Room> rooms = new LinkedHashMap<>();
+    private final HashMap<UUID, Long> roomIgnoreUntil = new HashMap<>(); // lobiye yollanan oyuncu kısa süre odaya sayılmaz
+    private final HashMap<UUID, Long> roomMsgCd = new HashMap<>();       // giriş/çıkış mesajı tekrarını engeller
+    private final HashMap<UUID, Long> roomKickCd = new HashMap<>();
+    private final HashSet<UUID> hubOnRespawn = new HashSet<>();
+    private java.io.File roomGlassFile;
+
+    // ── Mesaj / ses yardımcıları ──
+    private String roomMsg(String body) { return uiMsg("1v1 Odası", body); }
+    private String roomErr(String body) { return uiErr("1v1 Odası", body); }
+    private void roomTitle(Player p, String t, String s, int in, int stay, int out) {
+        if (p != null && p.isOnline()) p.sendTitle(color(t), color(s), in, stay, out);
+    }
+    private void roomActionBar(Player p, String text) {
+        if (p == null || !p.isOnline()) return;
+        try {
+            p.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR,
+                net.md_5.bungee.api.chat.TextComponent.fromLegacyText(color(text)));
+        } catch (Throwable ignored) {}
+    }
+    private void roomSound(Player p, Sound s, float vol, float pitch) {
+        if (p != null && p.isOnline()) p.playSound(p.getLocation(), s, vol, pitch);
+    }
+    private boolean roomCooldownOk(UUID u, long ms) {
+        long now = System.currentTimeMillis();
+        Long last = roomMsgCd.get(u);
+        if (last != null && now - last < ms) return false;
+        roomMsgCd.put(u, now);
+        return true;
+    }
+    private long roomEndWaitMs() { return Math.max(1, getConfig().getInt("oda.bitis-bekleme", 5)) * 1000L; }
+
+    private void roomEnterNotice(Player p) {
+        if (!roomCooldownOk(p.getUniqueId(), 1500L)) return;
+        p.sendMessage(roomMsg("1v1 odasına girdin. Rakip bekleniyor."));
+        roomTitle(p, UI_TEXT + "&l1v1 Odası", UI_SUB + "Rakip bekleniyor", 5, 35, 10);
+        roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.35f, 1.3f);
+    }
+    private void roomLeaveNotice(Player p) {
+        if (!roomCooldownOk(p.getUniqueId(), 1500L)) return;
+        p.sendMessage(roomMsg("1v1 odasından ayrıldın."));
+        roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.3f, 0.8f);
+    }
+    private void roomKick(Player p, String reason) {
+        if (p == null || !p.isOnline()) return;
+        Long cd = roomKickCd.get(p.getUniqueId());
+        long now = System.currentTimeMillis();
+        if (cd != null && now - cd < 3000L) return;
+        roomKickCd.put(p.getUniqueId(), now);
+        p.sendMessage(roomErr(reason));
+        roomSound(p, Sound.BLOCK_NOTE_BLOCK_BASS, 0.4f, 0.9f);
+        sendToHub(p);
+    }
+
+    /** Oyuncuyu lobiye gönderir: konsoldan hub komutu (config: oda.hub-komutu), olmazsa /hub, yine olmazsa spawn. */
+    private void sendToHub(Player p) {
+        if (p == null || !p.isOnline()) return;
+        final UUID uid = p.getUniqueId();
+        roomIgnoreUntil.put(uid, System.currentTimeMillis() + 4000L);
+        p.setWalkSpeed(0.2f); p.setFlySpeed(0.1f);
+        String cmd = getConfig().getString("oda.hub-komutu", "hub {oyuncu}").replace("{oyuncu}", p.getName()).trim();
+        if (cmd.startsWith("/")) cmd = cmd.substring(1);
+        boolean ok = false;
+        if (!cmd.isEmpty()) {
+            try { ok = Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd); } catch (Exception ignored) {}
+        }
+        if (!ok) {
+            try { p.performCommand("hub"); } catch (Exception ignored) {}
+        }
+        // Güvenlik ağı: hub çalışmadıysa oyuncu odada takılı kalmasın
+        new BukkitRunnable() {
+            @Override public void run() {
+                Player q = Bukkit.getPlayer(uid);
+                if (q == null || !q.isOnline() || q.isDead()) return;
+                if (roomAt(q.getLocation()) != null) teleportToSpawn(q);
+            }
+        }.runTaskLater(this, 30L);
+    }
+
+    private Room roomAt(Location l) {
+        if (l == null || l.getWorld() == null) return null;
+        for (Room r : rooms.values())
+            if (r.world.equals(l.getWorld().getName()) && r.box.contains(l.toVector())) return r;
+        return null;
+    }
+
+    // ── Ekipman puanı (3. oyuncu kararında en düşük olan lobiye gider) ──
+    private double gearArmorValue(ItemStack it) {
+        if (it == null || it.getType() == Material.AIR) return 0;
+        String n = it.getType().name();
+        double v = 0;
+        if (n.startsWith("NETHERITE_")) v = 8; else if (n.startsWith("DIAMOND_")) v = 6;
+        else if (n.startsWith("IRON_")) v = 4; else if (n.startsWith("CHAINMAIL_") || n.startsWith("TURTLE_")) v = 3;
+        else if (n.startsWith("GOLDEN_")) v = 2; else if (n.startsWith("LEATHER_")) v = 1;
+        else if (it.getType() == Material.ELYTRA) v = 5;
+        if (v > 0) for (int lv : it.getEnchantments().values()) v += lv * 0.4;
+        return v;
+    }
+    private double gearWeaponValue(ItemStack it) {
+        if (it == null || it.getType() == Material.AIR) return 0;
+        String n = it.getType().name();
+        double v = 0;
+        if (n.endsWith("_SWORD") || n.endsWith("_AXE")) {
+            if (n.startsWith("NETHERITE_")) v = 8; else if (n.startsWith("DIAMOND_")) v = 6;
+            else if (n.startsWith("IRON_")) v = 4; else if (n.startsWith("STONE_")) v = 2.5;
+            else if (n.startsWith("GOLDEN_")) v = 2; else v = 1;
+        } else if (it.getType() == Material.MACE) v = 9;
+        else if (it.getType() == Material.TRIDENT) v = 5;
+        else if (it.getType() == Material.BOW || it.getType() == Material.CROSSBOW) v = 2.5;
+        if (v > 0) for (int lv : it.getEnchantments().values()) v += lv * 0.4;
+        return v;
+    }
+    private double gearScore(Player p) {
+        if (p == null || !p.isOnline()) return -1;
+        double s = 0;
+        PlayerInventory inv = p.getInventory();
+        for (ItemStack it : inv.getArmorContents()) s += gearArmorValue(it);
+        List<ItemStack> all = new ArrayList<>(Arrays.asList(inv.getContents()));
+        all.add(inv.getItemInOffHand());
+        double bestW = 0, extra = 0; int totems = 0;
+        for (ItemStack it : all) {
+            if (it == null || it.getType() == Material.AIR) continue;
+            bestW = Math.max(bestW, gearWeaponValue(it));
+            Material m = it.getType();
+            if (m == Material.TOTEM_OF_UNDYING) totems += it.getAmount();
+            else if (m == Material.ENCHANTED_GOLDEN_APPLE) extra += it.getAmount() * 0.6;
+            else if (m == Material.GOLDEN_APPLE) extra += it.getAmount() * 0.15;
+            else if (m == Material.ENDER_PEARL) extra += Math.min(it.getAmount(), 16) * 0.05;
+        }
+        return s + bestW + Math.min(totems, 6) * 1.5 + Math.min(extra, 8);
+    }
+    /** En düşük ekipmanlı oyuncu; eşitlikte en son girenin üstüne düşer. */
+    private UUID gearLowest(Collection<UUID> ids) {
+        UUID worst = null; double best = Double.MAX_VALUE;
+        for (UUID u : ids) {
+            double sc = gearScore(Bukkit.getPlayer(u));
+            if (sc <= best) { best = sc; worst = u; }
+        }
+        return worst;
+    }
+
+    // ── Cam duvarlar (yalnızca boş bloklara konur, yalnızca konulanlar geri alınır) ──
+    private void roomCloseGlass(Room r) {
+        World w = Bukkit.getWorld(r.world);
+        if (w == null) return;
+        r.glass.clear();
+        for (int x = r.minX; x <= r.maxX; x++)
+            for (int y = r.minY; y <= r.maxY; y++)
+                for (int z = r.minZ; z <= r.maxZ; z++) {
+                    boolean yanKenar = (x == r.minX || x == r.maxX || z == r.minZ || z == r.maxZ) && y > r.minY;
+                    boolean tavan = (y == r.maxY);
+                    if (!(yanKenar || tavan)) continue;
+                    Block b = w.getBlockAt(x, y, z);
+                    if (b.getType() == Material.AIR) {
+                        b.setType(Material.GLASS, false);
+                        r.glass.add(b.getLocation());
+                    }
+                }
+        roomGlassStore(r);
+    }
+    private void roomOpenGlass(Room r) {
+        for (Location l : r.glass) {
+            if (l.getWorld() == null) continue;
+            Block b = l.getBlock();
+            if (b.getType() == Material.GLASS) b.setType(Material.AIR, false);
+        }
+        r.glass.clear();
+        roomGlassStore(r);
+    }
+    /** Cam listesini diske yazar: sunucu maç ortasında kapanırsa açılışta camlar temizlenir. */
+    private void roomGlassStore(Room r) {
+        try {
+            if (roomGlassFile == null) roomGlassFile = new java.io.File(getDataFolder(), "oda-cam.yml");
+            org.bukkit.configuration.file.YamlConfiguration y = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(roomGlassFile);
+            if (r.glass.isEmpty()) { y.set(r.id, null); }
+            else {
+                List<String> l = new ArrayList<>();
+                for (Location loc : r.glass) l.add(loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ());
+                y.set(r.id + ".world", r.world);
+                y.set(r.id + ".bloklar", l);
+            }
+            getDataFolder().mkdirs();
+            y.save(roomGlassFile);
+        } catch (Exception ex) {
+            getLogger().warning("1v1 Room cam kaydı yazılamadı: " + ex.getMessage());
+        }
+    }
+    private void roomGlassRecover() {
+        try {
+            roomGlassFile = new java.io.File(getDataFolder(), "oda-cam.yml");
+            if (!roomGlassFile.exists()) return;
+            org.bukkit.configuration.file.YamlConfiguration y = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(roomGlassFile);
+            for (String id : y.getKeys(false)) {
+                World w = Bukkit.getWorld(y.getString(id + ".world", ""));
+                if (w == null) continue;
+                for (String s : y.getStringList(id + ".bloklar")) {
+                    String[] pt = s.split(",");
+                    if (pt.length != 3) continue;
+                    Block b = w.getBlockAt(Integer.parseInt(pt[0].trim()), Integer.parseInt(pt[1].trim()), Integer.parseInt(pt[2].trim()));
+                    if (b.getType() == Material.GLASS) b.setType(Material.AIR, false);
+                }
+            }
+            roomGlassFile.delete();
+        } catch (Exception ex) {
+            getLogger().warning("1v1 Room cam temizliği başarısız: " + ex.getMessage());
+        }
+    }
+
+    // ── Kalıcılık ──
+    private void saveRooms(boolean writeNow) {
+        getConfig().set("oda.arenalar", null);
+        for (Room r : rooms.values()) {
+            String b = "oda.arenalar." + r.id;
+            getConfig().set(b + ".world", r.world);
+            getConfig().set(b + ".min", r.minX + "," + r.minY + "," + r.minZ);
+            getConfig().set(b + ".max", r.maxX + "," + r.maxY + "," + r.maxZ);
+        }
+        if (writeNow) saveConfig();
+    }
+    private void loadRooms() {
+        rooms.clear();
+        if (!getConfig().isConfigurationSection("oda.arenalar")) return;
+        for (String id : getConfig().getConfigurationSection("oda.arenalar").getKeys(false)) {
+            try {
+                String base = "oda.arenalar." + id;
+                String[] mn = getConfig().getString(base + ".min", "").split(",");
+                String[] mx = getConfig().getString(base + ".max", "").split(",");
+                Room r = new Room(id, getConfig().getString(base + ".world", "world"),
+                    Integer.parseInt(mn[0].trim()), Integer.parseInt(mn[1].trim()), Integer.parseInt(mn[2].trim()),
+                    Integer.parseInt(mx[0].trim()), Integer.parseInt(mx[1].trim()), Integer.parseInt(mx[2].trim()));
+                rooms.put(id, r);
+                try { arenaCounter = Math.max(arenaCounter, Integer.parseInt(id.substring(id.lastIndexOf('_') + 1))); } catch (Exception ignored) {}
+            } catch (Exception ex) {
+                getLogger().warning("1v1 Room yüklenemedi (" + id + "): " + ex.getMessage());
+            }
+        }
+    }
+    private boolean roomDelete(String id) {
+        Room r = rooms.remove(id);
+        if (r == null) return false;
+        roomOpenGlass(r);
+        if (r.a != null) playerAyarlaArena.remove(r.a);
+        if (r.b != null) playerAyarlaArena.remove(r.b);
+        saveRooms(true);
+        return true;
+    }
+
+    // ── Wand: sağ tık = 1. köşe, sol tık = 2. köşe + oda kurulumu ──
     @EventHandler
     public void onAyarlaWandUse(PlayerInteractEvent e) {
         Player p = e.getPlayer();
@@ -1727,166 +1996,254 @@ public class LoginX extends JavaPlugin implements Listener {
         if (!item.hasItemMeta() || item.getItemMeta().getDisplayName() == null) return;
         String dn = ChatColor.stripColor(item.getItemMeta().getDisplayName());
         if (!dn.contains("1v1 Ayarla")) return;
+        if (e.getHand() != EquipmentSlot.HAND) return;
 
         e.setCancelled(true);
         if (e.getClickedBlock() == null) return;
         Location clicked = e.getClickedBlock().getLocation();
+        UUID uid = p.getUniqueId();
 
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK) {
-            ayarlaPos1.put(p.getUniqueId(), clicked);
-            ayarlaPos2.remove(p.getUniqueId());
-            p.sendMessage(color("&#ffaa00&l1v1 Ayarla &8» &fBirinci köşe: &b"
-                + clicked.getBlockX() + ", " + clicked.getBlockY() + ", " + clicked.getBlockZ()));
-            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
-            // Sol tık itemini al
-            ItemStack offHand = p.getInventory().getItemInOffHand();
-            if (offHand.getType() != Material.AIR) {
-                ayarlaItem1.put(p.getUniqueId(), offHand.clone());
-                p.sendMessage(color("  &7Sol tık duvar item: &e" + offHand.getType().name()));
-            }
-
+            ayarlaPos1.put(uid, clicked);
+            p.sendMessage(roomMsg("Birinci köşe: " + hl(clicked.getBlockX() + ", " + clicked.getBlockY() + ", " + clicked.getBlockZ())));
+            roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.4f, 1.4f);
         } else if (e.getAction() == Action.LEFT_CLICK_BLOCK) {
-            if (!ayarlaPos1.containsKey(p.getUniqueId())) {
-                p.sendMessage(color("&#ff4444&l1v1 Ayarla &8» &cÖnce sağ tıkla ile birinci köşeyi seç!"));
-                return;
+            Location l1 = ayarlaPos1.get(uid);
+            if (l1 == null) { p.sendMessage(roomErr("Önce sağ tıkla ile birinci köşeyi seç.")); return; }
+            if (l1.getWorld() == null || !l1.getWorld().equals(clicked.getWorld())) {
+                p.sendMessage(roomErr("İki köşe aynı dünyada olmalı.")); return;
             }
-            ayarlaPos2.put(p.getUniqueId(), clicked);
-            Location l1 = ayarlaPos1.get(p.getUniqueId());
-            Location l2 = clicked;
-
-            // Arena kaydet
-            String arenaId = "ayarla_" + (++arenaCounter);
-            BoundingBox bbox = BoundingBox.of(l1, l2);
-            ayarlaBounds.put(arenaId, bbox);
-            ayarlaArenas.put(arenaId, p.getUniqueId());
-            ayarlaItem2.put(p.getUniqueId(), item.clone());
-
-            // Envanterdeki ana el itemini duvar materyali olarak kullan
-            ItemStack wallItem = p.getInventory().getItemInMainHand();
-            ayarlaWalls.put(arenaId, new ItemStack[]{
-                ayarlaItem1.getOrDefault(p.getUniqueId(), new ItemStack(Material.GLASS)),
-                wallItem
-            });
-
-            p.sendMessage(color("&#00ff88&l1v1 Ayarla &8» &fArena kuruldu! &7ID: &e" + arenaId));
-            p.sendMessage(color("  &7Alan: &f"
-                + Math.abs(l1.getBlockX()-l2.getBlockX()+1) + "x"
-                + Math.abs(l1.getBlockY()-l2.getBlockY()+1) + "x"
-                + Math.abs(l1.getBlockZ()-l2.getBlockZ()+1)));
-            p.sendMessage(color("  &72 oyuncu girince arena eşyalarla kapanır."));
-            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.2f);
+            String id;
+            do { id = "ayarla_" + (++arenaCounter); } while (rooms.containsKey(id));
+            Room r = new Room(id, clicked.getWorld().getName(),
+                l1.getBlockX(), l1.getBlockY(), l1.getBlockZ(),
+                clicked.getBlockX(), clicked.getBlockY(), clicked.getBlockZ());
+            rooms.put(id, r);
+            saveRooms(true);
+            ayarlaPos1.remove(uid); ayarlaPos2.remove(uid);
+            p.sendMessage(roomMsg("Oda kuruldu. ID: " + hl(id)));
+            p.sendMessage(roomMsg("Boyut: " + hl((r.maxX - r.minX + 1) + " x " + (r.maxY - r.minY + 1) + " x " + (r.maxZ - r.minZ + 1))
+                + ". İki oyuncu girince oda kapanır, düello bitince kendiliğinden açılır."));
+            roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.45f, 1.1f);
         }
     }
 
-    // Oyuncu 1v1ayarla arenasına girince: 2. oyuncu girdiğinde kapat (döngü)
-    @EventHandler
-    public void onPlayerMoveAyarla(PlayerMoveEvent ev) {
-        Player p = ev.getPlayer();
-        // Zaten bu arenada kayıtlıysa tekrar işlem yapma
-        if (playerAyarlaArena.containsKey(p.getUniqueId())) return;
-        Location to = ev.getTo(); if (to == null) return;
-        // Sadece blok değişiminde kontrol et (gereksiz CPU yükünü önler)
-        Location from = ev.getFrom();
-        if (from.getBlockX() == to.getBlockX() && from.getBlockY() == to.getBlockY() && from.getBlockZ() == to.getBlockZ()) return;
-
-        for (Map.Entry<String, BoundingBox> entry : ayarlaBounds.entrySet()) {
-            String arenaId = entry.getKey();
-            BoundingBox bbox = entry.getValue();
-            if (!bbox.contains(to.toVector())) continue;
-
-            UUID[] queue = ayarlaQueue.computeIfAbsent(arenaId, k -> new UUID[2]);
-
-            if (queue[0] == null) {
-                // İlk oyuncu
-                queue[0] = p.getUniqueId();
-                playerAyarlaArena.put(p.getUniqueId(), arenaId);
-                p.sendMessage(duel("Arenaya girdin. İkinci oyuncu bekleniyor."));
-                p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
-            } else if (queue[1] == null && !queue[0].equals(p.getUniqueId())) {
-                // İkinci oyuncu — aynı oyuncu tekrar girmesin
-                // queue[0]'ın hâlâ oyunda olup olmadığını kontrol et
-                Player firstPlayer = Bukkit.getPlayer(queue[0]);
-                if (firstPlayer == null || !playerAyarlaArena.containsKey(queue[0])) {
-                    // İlk oyuncu ayrılmış, slotu yenile
-                    queue[0] = p.getUniqueId();
-                    playerAyarlaArena.put(p.getUniqueId(), arenaId);
-                    p.sendMessage(duel("Arenaya girdin. İkinci oyuncu bekleniyor."));
-                    p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1f, 1.5f);
-                    return;
-                }
-
-                queue[1] = p.getUniqueId();
-                playerAyarlaArena.put(p.getUniqueId(), arenaId);
-                // 2 kişi var — sadece boş yerlere cam koy (yere değil)
-                closeAyarlaArena(arenaId, bbox, p.getWorld());
-                // Arenaları tekrar kaydet — döngü için silinmesin
-                ayarlaArenas.putIfAbsent(arenaId, queue[0]);
-                for (UUID uid : queue) {
-                    Player ap = Bukkit.getPlayer(uid);
-                    if (ap != null) {
-                        ap.sendMessage(duel("1v1 başladı. Oyundan çıkarsan maçı kaybedersin."));
-                        ap.sendTitle(duelFlop("1v1", true), color(UI_SUB + "İyi şanslar"), 5, 60, 15);
-                        ap.playSound(ap.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.8f);
-                    }
-                }
-
-                // ─── 10 dakikalık üst süre sınırı — bitmezse ikisini de duelspawnayarla'ya ışınla ───
-                final String finalArenaIdTimeout = arenaId;
-                final UUID p1u = queue[0], p2u = queue[1];
-                new BukkitRunnable() {
-                    @Override public void run() {
-                        UUID[] q = ayarlaQueue.get(finalArenaIdTimeout);
-                        // Hâlâ aynı ikili aktifse (maç bitmemişse) süre doldu say
-                        if (q == null || q[0] == null || q[1] == null
-                            || !q[0].equals(p1u) || !q[1].equals(p2u)) return;
-                        playerAyarlaArena.remove(p1u);
-                        playerAyarlaArena.remove(p2u);
-                        ayarlaQueue.put(finalArenaIdTimeout, new UUID[2]);
-                        BoundingBox tbbox = ayarlaBounds.get(finalArenaIdTimeout);
-                        for (UUID uid2 : new UUID[]{p1u, p2u}) {
-                            Player tp = Bukkit.getPlayer(uid2);
-                            if (tp != null && tp.isOnline()) {
-                                tp.sendTitle(
-                                    duelFlop("Süre doldu", true),
-                                    color(UI_SUB + "10 dakikada bitmedi, spawn noktasına ışınlanıyorsun."),
-                                    5, 60, 15);
-                                tp.sendMessage(duel("1v1 odası 10 dakika sınırına ulaştı. Maç berabere sayıldı."));
-                                tp.playSound(tp.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1f, 1f);
-                                teleportToSpawn(tp);
-                            }
-                        }
-                        // Oda tekrar herkese açık olsun
-                        if (tbbox != null && p.getWorld() != null) openAyarlaArena(finalArenaIdTimeout, tbbox, p.getWorld());
-                    }
-                }.runTaskLater(LoginX.this, 20L * 600); // 10 dakika = 600 saniye
+    // ── Ana zamanlayıcı ──
+    private void tickRooms() {
+        if (rooms.isEmpty()) return;
+        long nowMs = System.currentTimeMillis();
+        roomIgnoreUntil.values().removeIf(t -> t < nowMs);
+        roomKickCd.values().removeIf(t -> nowMs - t > 10_000L);
+        for (Room r : new ArrayList<>(rooms.values())) {
+            try {
+                tickRoom(r, nowMs);
+            } catch (Throwable t) {
+                getLogger().warning("1v1 Room hatası (" + r.id + "): " + t);
+                try { roomReset(r, false); } catch (Throwable ignored) {}
             }
-            break; // Sadece bir arenayla eşleş
         }
     }
 
-    private void closeAyarlaArena(String arenaId, BoundingBox bbox, World world) {
-        // SADECE yan duvarlar ve tavan — YERE (minY bloğu) cam koyma!
-        int minX = (int) bbox.getMinX(); int maxX = (int) bbox.getMaxX();
-        int minY = (int) bbox.getMinY(); int maxY = (int) bbox.getMaxY();
-        int minZ = (int) bbox.getMinZ(); int maxZ = (int) bbox.getMaxZ();
+    private void tickRoom(Room r, long nowMs) {
+        World w = Bukkit.getWorld(r.world);
+        if (w == null) return;
 
-        // Orijinal blokları kaydet (geri yükleme için)
-        Map<String, Material> savedBlocks = new HashMap<>();
+        LinkedHashSet<UUID> now = new LinkedHashSet<>();
+        for (Player p : w.getPlayers()) {
+            if (!p.isOnline() || p.isDead()) continue;
+            GameMode gm = p.getGameMode();
+            if (gm == GameMode.SPECTATOR || gm == GameMode.CREATIVE) continue;
+            Long ig = roomIgnoreUntil.get(p.getUniqueId());
+            if (ig != null && ig > nowMs) continue;
+            if (r.box.contains(p.getLocation().toVector())) now.add(p.getUniqueId());
+        }
 
-        for (int x = minX; x <= maxX; x++)
-            for (int y = minY; y <= maxY; y++)
-                for (int z = minZ; z <= maxZ; z++) {
-                    // Yalnızca YAN kenarlara ve tavana cam koy — TABANA koyma
-                    boolean isYanKenar = (x==minX||x==maxX||z==minZ||z==maxZ) && y > minY;
-                    boolean isTavan   = (y==maxY);
-                    if ((isYanKenar || isTavan) && world.getBlockAt(x,y,z).getType() == Material.AIR) {
-                        savedBlocks.put(x+","+y+","+z, Material.AIR);
-                        world.getBlockAt(x,y,z).setType(Material.GLASS);
-                    }
+        if (r.state == ROOM_WAIT) {
+            // Çıkanlar
+            for (Iterator<UUID> it = r.inside.iterator(); it.hasNext(); ) {
+                UUID u = it.next();
+                if (!now.contains(u)) {
+                    it.remove();
+                    Player lp = Bukkit.getPlayer(u);
+                    if (lp != null && lp.isOnline()) roomLeaveNotice(lp);
                 }
-        // Blokları arena kaydına sakla
-        ayarlaOriginalBlocks.put(arenaId, savedBlocks);
+            }
+            // Girenler
+            List<UUID> joined = new ArrayList<>();
+            for (UUID u : now) if (r.inside.add(u)) joined.add(u);
+            // 3 veya daha fazla oyuncu: en düşük ekipmanlı gönderilir, 2 kişi kalır
+            while (r.inside.size() > 2) {
+                UUID worst = gearLowest(r.inside);
+                if (worst == null) break;
+                r.inside.remove(worst);
+                joined.remove(worst);
+                Player wp = Bukkit.getPlayer(worst);
+                roomKick(wp, "Odaya üç oyuncu girdi. Ekipmanı en düşük oyuncu olarak lobiye gönderildin.");
+            }
+            if (r.inside.size() == 2) {
+                roomStart(r);
+            } else {
+                for (UUID u : joined) {
+                    Player jp = Bukkit.getPlayer(u);
+                    if (jp != null && jp.isOnline() && r.inside.contains(u)) roomEnterNotice(jp);
+                }
+            }
+            return;
+        }
+
+        if (r.state == ROOM_ACTIVE) {
+            if (r.a == null || r.b == null) { roomReset(r, false); return; }
+            for (UUID du : new UUID[]{r.a, r.b}) {
+                Player dp = Bukkit.getPlayer(du);
+                if (dp == null || !dp.isOnline()) { roomForfeit(r, du); return; }
+                if (dp.isDead()) continue; // ölüm olayı bitişi kendisi yönetir
+                if (now.contains(du)) { r.outTicks.remove(du); continue; }
+                int n = r.outTicks.merge(du, 1, Integer::sum);
+                if (n >= 8) { roomForfeit(r, du); return; } // odanın dışına çıkan düelloyu kaybeder
+            }
+            // Düelloya ait olmayan herkes lobiye
+            for (UUID u : now) {
+                if (r.isDueler(u)) continue;
+                roomKick(Bukkit.getPlayer(u), "Bu odada düello sürüyor. Lobiye yönlendiriliyorsun.");
+            }
+            // 10 dakika üst süre
+            if (nowMs - r.startedAt >= 600_000L) roomDraw(r);
+            return;
+        }
+
+        // BİTİŞ: kazanan geri sayım, sonra oda sıfırlanır
+        if (nowMs >= r.endAt) { roomReset(r, true); return; }
+        int sec = (int) Math.ceil((r.endAt - nowMs) / 1000.0);
+        if (sec != r.lastSec) {
+            r.lastSec = sec;
+            Player win = r.winner != null ? Bukkit.getPlayer(r.winner) : null;
+            roomActionBar(win, UI_SUB + "Lobiye yönlendirilmene " + UI_TEXT + sec + UI_SUB + " saniye");
+        }
     }
+
+    private void roomStart(Room r) {
+        Iterator<UUID> it = r.inside.iterator();
+        UUID ua = it.next(), ub = it.next();
+        Player pa = Bukkit.getPlayer(ua), pb = Bukkit.getPlayer(ub);
+        if (pa == null || !pa.isOnline() || pb == null || !pb.isOnline()) {
+            r.inside.removeIf(u -> { Player q = Bukkit.getPlayer(u); return q == null || !q.isOnline(); });
+            return;
+        }
+        r.a = ua; r.b = ub; r.winner = null;
+        r.state = ROOM_ACTIVE; r.startedAt = System.currentTimeMillis(); r.outTicks.clear();
+        playerAyarlaArena.put(ua, r.id);
+        playerAyarlaArena.put(ub, r.id);
+        roomCloseGlass(r);
+        roomAnnounceStart(pa, pb);
+        roomAnnounceStart(pb, pa);
+    }
+    private void roomAnnounceStart(Player p, Player opp) {
+        p.sendMessage(roomMsg("Düello başladı. Rakibin " + hl(opp.getName()) + ". Oyundan çıkarsan maçı kaybedersin."));
+        roomTitle(p, UI_TEXT + "&lDüello Başladı", UI_SUB + "Rakip: " + UI_TEXT + opp.getName(), 5, 45, 10);
+        roomSound(p, Sound.BLOCK_NOTE_BLOCK_BELL, 0.45f, 1.1f);
+        new BukkitRunnable() { @Override public void run() { roomSound(p, Sound.BLOCK_NOTE_BLOCK_BELL, 0.45f, 1.5f); } }.runTaskLater(this, 4L);
+    }
+
+    /** Kazanan belli oldu: ACTIVE -> ENDING. Sadece bir kez çalışır (tekrar mesaj yok). */
+    private void roomFinish(Room r, UUID winnerId, UUID loserId, String loserName, boolean loserLeft) {
+        if (r.state != ROOM_ACTIVE) return;
+        r.state = ROOM_ENDING;
+        r.winner = winnerId;
+        r.endAt = System.currentTimeMillis() + roomEndWaitMs();
+        r.lastSec = -1;
+        Player winner = winnerId != null ? Bukkit.getPlayer(winnerId) : null;
+        Player loser = loserId != null ? Bukkit.getPlayer(loserId) : null;
+
+        if (winner != null && winner.isOnline()) {
+            winner.sendMessage(roomMsg(loserLeft
+                ? hl(loserName) + " oyundan ayrıldı. Düelloyu kazandın."
+                : "Düelloyu kazandın. " + hl(loserName) + " elendi."));
+            roomTitle(winner, UI_OK + "&lZafer", UI_SUB + loserName + (loserLeft ? " oyundan ayrıldı" : " elendi"), 5, 50, 15);
+            roomSound(winner, Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.6f, 1.1f);
+        }
+        if (loser != null && loser.isOnline() && !loserLeft) {
+            String wn = winner != null ? winner.getName() : "Rakip";
+            loser.sendMessage(roomMsg("Düelloyu kaybettin. Kazanan: " + hl(wn) + "."));
+            roomTitle(loser, UI_BAD + "&lYenilgi", UI_SUB + "Kazanan: " + UI_TEXT + wn, 5, 50, 15);
+            roomSound(loser, Sound.BLOCK_NOTE_BLOCK_BASS, 0.45f, 0.8f);
+            if (loser.isDead()) hubOnRespawn.add(loserId);
+            else sendToHub(loser);
+        }
+    }
+
+    private void roomForfeit(Room r, UUID loserId) {
+        if (r.state != ROOM_ACTIVE) return;
+        Player loser = Bukkit.getPlayer(loserId);
+        UUID oppId = r.opponentOf(loserId);
+        Player winner = oppId != null ? Bukkit.getPlayer(oppId) : null;
+        boolean left = loser == null || !loser.isOnline();
+        if (!left && !loser.isDead()) {
+            giveDuelLootChest(loser, (winner != null && winner.isOnline() && !winner.isDead()) ? winner : null, loser.getLocation());
+        }
+        roomFinish(r, oppId, loserId, loser != null ? loser.getName() : "Rakip", left);
+    }
+
+    private void roomDraw(Room r) {
+        for (UUID u : new UUID[]{r.a, r.b}) {
+            Player pl = u != null ? Bukkit.getPlayer(u) : null;
+            if (pl == null || !pl.isOnline()) continue;
+            pl.sendMessage(roomMsg("Süre doldu. Düello berabere sonuçlandı."));
+            roomTitle(pl, UI_WARN + "&lSüre Doldu", UI_SUB + "Düello berabere", 5, 50, 15);
+            roomSound(pl, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.4f, 0.7f);
+            if (!pl.isDead()) sendToHub(pl);
+        }
+        roomReset(r, false);
+    }
+
+    /** Odayı her koşulda temiz bekleme durumuna döndürür; camlar açılır. */
+    private void roomReset(Room r, boolean sendWinnerToHub) {
+        roomOpenGlass(r);
+        UUID win = r.winner;
+        if (r.a != null) playerAyarlaArena.remove(r.a);
+        if (r.b != null) playerAyarlaArena.remove(r.b);
+        r.a = null; r.b = null; r.winner = null;
+        r.inside.clear(); r.outTicks.clear();
+        r.state = ROOM_WAIT; r.lastSec = -1;
+        if (sendWinnerToHub && win != null) {
+            Player wp = Bukkit.getPlayer(win);
+            if (wp != null && wp.isOnline() && !wp.isDead()) {
+                wp.sendMessage(roomMsg("Düello tamamlandı. Lobiye yönlendiriliyorsun."));
+                sendToHub(wp);
+            }
+        }
+    }
+
+    private void roomHandleDeath(Player dead) {
+        UUID uid = dead.getUniqueId();
+        String id = playerAyarlaArena.get(uid);
+        if (id == null) return;
+        Room r = rooms.get(id);
+        if (r == null) { playerAyarlaArena.remove(uid); return; }
+        if (r.state == ROOM_ACTIVE && r.isDueler(uid)) {
+            roomFinish(r, r.opponentOf(uid), uid, dead.getName(), false);
+        } else {
+            hubOnRespawn.add(uid); // bitiş sürecinde ölen: yine lobiye
+        }
+    }
+
+    private void roomHandleQuit(Player p) {
+        UUID u = p.getUniqueId();
+        hubOnRespawn.remove(u);
+        roomIgnoreUntil.remove(u);
+        for (Room rr : rooms.values()) rr.inside.remove(u);
+        String id = playerAyarlaArena.get(u);
+        if (id == null) return;
+        Room r = rooms.get(id);
+        if (r == null) { playerAyarlaArena.remove(u); return; }
+        if (r.state == ROOM_ACTIVE && r.isDueler(u)) {
+            UUID oppId = r.opponentOf(u);
+            Player winner = oppId != null ? Bukkit.getPlayer(oppId) : null;
+            giveDuelLootChest(p, (winner != null && winner.isOnline() && !winner.isDead()) ? winner : null, p.getLocation());
+            roomFinish(r, oppId, u, p.getName(), true);
+        }
+        playerAyarlaArena.remove(u);
+    }
+
 
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent e) {
@@ -1925,17 +2282,21 @@ public class LoginX extends JavaPlugin implements Listener {
                     UUID[] dpEarly = duelPlayers.get(dArenaEarly);
                     if (dpEarly != null) for (UUID u : dpEarly) if (!u.equals(dead.getUniqueId())) duelLootRecipient = Bukkit.getPlayer(u);
                 }
-                if (duelLootRecipient == null) {
-                    String aArenaEarly = playerAyarlaArena.get(dead.getUniqueId());
-                    if (aArenaEarly != null) {
-                        UUID[] apsEarly = ayarlaQueue.get(aArenaEarly);
-                        if (apsEarly != null) for (UUID u : apsEarly) if (u != null && !u.equals(dead.getUniqueId())) duelLootRecipient = Bukkit.getPlayer(u);
-                    }
-                }
+            }
+            // 1v1 Room: sandık her zaman odadaki rakibe gider (normal düellodaki gibi)
+            Room roomOfDeath = rooms.get(playerAyarlaArena.get(dead.getUniqueId()));
+            if (roomOfDeath != null) {
+                UUID oppId = roomOfDeath.opponentOf(dead.getUniqueId());
+                Player opp = oppId != null ? Bukkit.getPlayer(oppId) : null;
+                if (opp != null && opp.isOnline() && !opp.isDead()) duelLootRecipient = opp;
             }
             giveDuelLootChest(dead, duelLootRecipient, dropLoc);
             // ── Ölüm sonrası komut kilidi başlasın (10sn hiçbir şey, sonra sadece /ec ve /pv) ──
             duelDeathTime.put(dead.getUniqueId(), System.currentTimeMillis());
+        } else if (isNoDropDeath(dead)) {
+            // ─── Eşya düşmeme sistemi: bu dünyada (bölge dışında) ölünce envanter aynen kalır ───
+            e.setKeepInventory(true);
+            e.getDrops().clear();
         } else if (killer != null && dead.getWorld().getName().equalsIgnoreCase("kutu")) {
             // ─── "kutu" dünyası: OYUNCU oyuncuyu öldürürse item düşmesin, envanter aynen kalsın (dupe-safe) ───
             e.setKeepInventory(true);
@@ -1952,7 +2313,7 @@ public class LoginX extends JavaPlugin implements Listener {
         }
 
         // ─── Stash varsa: "kutu"da PvP ölümüyse dupe riskine karşı stash'i geri ver, aksi halde tek noktaya dök ───
-        boolean kutuPvpDeath = killer != null && dead.getWorld().getName().equalsIgnoreCase("kutu");
+        boolean kutuPvpDeath = (killer != null && dead.getWorld().getName().equalsIgnoreCase("kutu")) || (!isDuelDeath && isNoDropDeath(dead));
         ItemStack[] stashContents = playerStash.remove(dead.getUniqueId());
         stashOpen.put(dead.getUniqueId(), false);
         if (stashContents != null) {
@@ -2010,83 +2371,8 @@ public class LoginX extends JavaPlugin implements Listener {
             }
         }
 
-        // 1v1ayarla arena — ölünce duvarları kaldır, 6sn geri sayım, döngü
-        if (playerAyarlaArena.containsKey(dead.getUniqueId())) {
-            String arenaId = playerAyarlaArena.get(dead.getUniqueId());
-            UUID[] aps = ayarlaQueue.get(arenaId);
-            BoundingBox bbox = ayarlaBounds.get(arenaId);
-
-            // Kazanan kim
-            Player winner1v1 = null;
-            if (aps != null) {
-                for (UUID uid : aps) {
-                    if (uid == null) continue;
-                    if (!uid.equals(dead.getUniqueId())) {
-                        winner1v1 = Bukkit.getPlayer(uid);
-                    }
-                    // Her ikisini de map'ten çıkar
-                    playerAyarlaArena.remove(uid);
-                }
-            }
-            // Öleni de map'ten çıkar (yukarıda döngüde çıkartılmış olmalı ama garantilemek için)
-            playerAyarlaArena.remove(dead.getUniqueId());
-
-            final Player finalWinner = winner1v1;
-
-            // Kazanana title
-            if (finalWinner != null && finalWinner.isOnline()) {
-                finalWinner.sendTitle(duelFlop("Kazandın", true), color(UI_SUB + dead.getName() + " elendi"), 5, 60, 15);
-                finalWinner.playSound(finalWinner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.8f, 1f);
-                finalWinner.sendMessage(duel("1v1 kazandın. " + hl(dead.getName()) + " elendi."));
-            }
-
-            // Camları kaldır + 6'dan geriye sayım
-            if (bbox != null && dead.getWorld() != null) {
-                final World arenaWorld = dead.getWorld();
-                final BoundingBox finalBbox = bbox;
-                final String finalArenaId = arenaId;
-
-                new BukkitRunnable() {
-                    int sec = 6;
-                    @Override public void run() {
-                        if (sec > 0) {
-                            // Geri sayımı kazanana göster
-                            if (finalWinner != null && finalWinner.isOnline()) {
-                                finalWinner.sendTitle(
-                                    duelFlop(sec + " saniye", true),
-                                    color(UI_SUB + "Arena camları açılıyor"),
-                                    0, 25, 5);
-                                finalWinner.playSound(finalWinner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.2f);
-                            }
-                            sec--;
-                        } else {
-                            cancel();
-                            // Camları kaldır — yani koyduğumuz cam bloklarını AIR yap
-                            openAyarlaArena(finalArenaId, finalBbox, arenaWorld);
-                            // Queue'yu sıfırla — döngü: bir dahaki oyuncu girince yeniden kapanır
-                            // Bounds ve arenas silinmesin ki arena tekrar kullanılabilsin!
-                            ayarlaQueue.put(finalArenaId, new UUID[2]);
-
-                            if (finalWinner != null && finalWinner.isOnline()) {
-                                finalWinner.sendTitle(
-                                    duelFlop("Arena açıldı", true),
-                                    color(UI_SUB + "Yeni oyuncular girebilir"),
-                                    5, 50, 15);
-                                finalWinner.sendMessage(duel("Arena camları açıldı. Yeni oyuncular girebilir."));
-                                finalWinner.playSound(finalWinner.getLocation(), Sound.BLOCK_GLASS_BREAK, 1f, 1.2f);
-                                // Kazanan da spawna ışınlansın — eskiden burada ışınlanmıyordu
-                                teleportToSpawn(finalWinner);
-                            }
-                        }
-                    }
-                }.runTaskTimer(this, 0L, 20L);
-            }
-
-            // SADECE queue'yu sıfırla — bounds/arenas/walls silinmesin, arena yeniden kullanılacak!
-            ayarlaQueue.put(arenaId, new UUID[2]);
-            // walls ve originalBlocks'u KORUYARAK sadece aktif savaş datasını temizle
-            // (ayarlaArenas, ayarlaBounds, ayarlaWalls silinmez — arena hâlâ var)
-        }
+        // 1v1 Room — ölüm: kazananı belirle, camları geri sayımla aç, odayı tekrar kullanıma hazırla
+        roomHandleDeath(dead);
     }
 
     // ─── Respawn'da gece görüşünü hemen uygula + duel/1v1 arenadan çıkınca spawna ışınla ───
@@ -2098,28 +2384,11 @@ public class LoginX extends JavaPlugin implements Listener {
                 if (!p.isOnline()) return;
                 p.addPotionEffect(new org.bukkit.potion.PotionEffect(
                     org.bukkit.potion.PotionEffectType.NIGHT_VISION, 1200, 0, false, false, false), true);
-                // Duel veya 1v1 arenada öldüyse spawna ışınla
-                teleportToSpawn(p);
+                // 1v1 Room'da kaybeden: lobiye (/hub). Diğer durumlar: spawn
+                if (hubOnRespawn.remove(p.getUniqueId())) sendToHub(p);
+                else teleportToSpawn(p);
             }
         }.runTaskLater(this, 2L);
-    }
-
-    /** Ayarla arena camlarını kaldır (AIR yap) — döngü için */
-    private void openAyarlaArena(String arenaId, BoundingBox bbox, World world) {
-        int minX = (int) bbox.getMinX(); int maxX = (int) bbox.getMaxX();
-        int minY = (int) bbox.getMinY(); int maxY = (int) bbox.getMaxY();
-        int minZ = (int) bbox.getMinZ(); int maxZ = (int) bbox.getMaxZ();
-        for (int x = minX; x <= maxX; x++)
-            for (int y = minY; y <= maxY; y++)
-                for (int z = minZ; z <= maxZ; z++) {
-                    boolean isYanKenar = (x==minX||x==maxX||z==minZ||z==maxZ) && y > minY;
-                    boolean isTavan   = (y==maxY);
-                    if (isYanKenar || isTavan) {
-                        Block b = world.getBlockAt(x,y,z);
-                        if (b.getType() == Material.GLASS) b.setType(Material.AIR);
-                    }
-                }
-        // Bounds ve arenas koru — arena silinmesin, sadece camlar açılsın
     }
 
     private void removeArenaBorderByBBox(World world, BoundingBox bbox) {
@@ -4988,47 +5257,10 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    // ─── 1v1 Room (ayarla) çıkış — biri çıkarsa oda SONSUZA KADAR KİLİTLİ KALMASIN ───
-    // Fix: eskiden quit olayında queue/playerAyarlaArena temizlenmiyordu, oda 7/24 tekrar açılmıyordu.
+    // ─── 1v1 Room çıkış — oda asla kilitli kalmaz (motor: roomHandleQuit) ───
     @EventHandler
     public void onAyarlaQuit(PlayerQuitEvent evq2) {
-        Player p = evq2.getPlayer();
-        UUID uid = p.getUniqueId();
-        String arenaId = playerAyarlaArena.get(uid);
-        if (arenaId == null) return;
-
-        UUID[] queue = ayarlaQueue.get(arenaId);
-        BoundingBox bbox = ayarlaBounds.get(arenaId);
-        Player winner = null;
-        if (queue != null) {
-            for (UUID u : queue) {
-                if (u == null) continue;
-                if (!u.equals(uid)) winner = Bukkit.getPlayer(u);
-            }
-        }
-        // Odadaki tüm kayıtları temizle — arena tekrar herkese açık olsun
-        if (queue != null) {
-            for (UUID u : queue) if (u != null) playerAyarlaArena.remove(u);
-        }
-        playerAyarlaArena.remove(uid);
-        // Queue'yu sıfırla — bounds/arenas/walls SİLİNMEZ, arena 7/24 kullanılabilir kalır
-        ayarlaQueue.put(arenaId, new UUID[2]);
-
-        // Kazanana bildirim + spawn
-        if (winner != null && winner.isOnline()) {
-            winner.sendTitle(
-                duelFlop("Kazandın", true),
-                color(UI_SUB + p.getName() + " oyundan çıktı"),
-                5, 60, 15);
-            winner.sendMessage(duel("1v1 kazandın. " + hl(p.getName()) + " oyundan çıktı."));
-            winner.playSound(winner.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
-            teleportToSpawn(winner);
-        }
-
-        // Camları hemen kaldır — oda yeni oyunculara açık olsun (bekletmeden)
-        if (bbox != null && p.getWorld() != null) {
-            openAyarlaArena(arenaId, bbox, p.getWorld());
-        }
+        roomHandleQuit(evq2.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -5413,6 +5645,8 @@ public class LoginX extends JavaPlugin implements Listener {
             getConfig().set("crates." + k + ".chances", chD);
         }
         saveArenaZones();
+        saveRooms(false);
+        saveNoDropRegions(false);
         saveConfig();
     }
 
@@ -6108,4 +6342,564 @@ public class LoginX extends JavaPlugin implements Listener {
             fb.remove();
         }
     }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  BAŞLATMA / KAPATMA (yeni sistemler)
+    // ═════════════════════════════════════════════════════════════════════
+    private final List<Command> dynamicCommands = new ArrayList<>();
+
+    private class DynCmd extends Command {
+        DynCmd(String name, String desc, String usage) {
+            super(name, desc, usage, new ArrayList<>());
+            setPermission("loginx.admin");
+        }
+        @Override public boolean execute(CommandSender sender, String label, String[] args) {
+            if (!sender.hasPermission("loginx.admin")) { sender.sendMessage(color("&cYetkisiz.")); return true; }
+            return LoginX.this.onCommand(sender, this, label, args);
+        }
+    }
+
+    private void registerDynamicCommand(String name, String desc, String usage) {
+        if (getCommand(name) != null) return; // plugin.yml'de varsa onu kullan
+        try {
+            DynCmd dc = new DynCmd(name, desc, usage);
+            Bukkit.getCommandMap().register("loginx", dc);
+            dynamicCommands.add(dc);
+        } catch (Throwable t) {
+            getLogger().warning("Komut kaydedilemedi (" + name + "): " + t);
+        }
+    }
+
+    private void initExtras() {
+        noDropWandKey = new NamespacedKey(this, "esyadusme_wand");
+        hudTag = new NamespacedKey(this, "hud_text");
+
+        registerDynamicCommand("esyadusmewand", "Eşya düşme bölgesi baltasını verir", "/esyadusmewand");
+        registerDynamicCommand("esyadusmeolustur", "Seçilen bölgede eşya düşme sistemini aktif eder", "/esyadusmeolustur");
+        registerDynamicCommand("esyadusmesil", "Eşya düşme bölgesini siler", "/esyadusmesil <id>");
+
+        loadNoDropRegions();
+        loadRooms();
+        roomGlassRecover();
+        hudSweepOrphans();
+        hudResetTeams();
+        hudLoadPalette();
+
+        // 1v1 Room motoru (3 tick'te bir)
+        new BukkitRunnable() {
+            @Override public void run() { tickRooms(); }
+        }.runTaskTimer(this, 40L, 3L);
+
+        // Oyuncu isim HUD'ı
+        final int hudInterval = Math.max(1, getConfig().getInt("hud.guncelleme-tick", 4));
+        new BukkitRunnable() {
+            @Override public void run() {
+                try { hudTick(); } catch (Throwable t) { getLogger().warning("HUD hatası: " + t); }
+            }
+        }.runTaskTimer(this, 40L, hudInterval);
+    }
+
+    private void shutdownExtras() {
+        try { hudRemoveAll(); hudRestoreTeams(); } catch (Throwable ignored) {}
+        for (Room r : rooms.values()) {
+            try { if (!r.glass.isEmpty()) roomOpenGlass(r); } catch (Throwable ignored) {}
+        }
+        try {
+            org.bukkit.command.CommandMap map = Bukkit.getCommandMap();
+            for (Command c : dynamicCommands) {
+                c.unregister(map);
+                map.getKnownCommands().values().removeIf(x -> x == c);
+            }
+        } catch (Throwable ignored) {}
+        dynamicCommands.clear();
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  EŞYA DÜŞMEME SİSTEMİ
+    //  - "mc.minerya.tc" dünyasında ölünce eşya düşmez (config: esyadusme.dunya)
+    //  - Yalnızca /esyadusmeolustur ile tanımlanan bölgelerde ölenlerin eşyası düşer
+    // ═════════════════════════════════════════════════════════════════════
+    private static class NoDropRegion {
+        final String id, world;
+        final int minX, minY, minZ, maxX, maxY, maxZ;
+        final BoundingBox box;
+        NoDropRegion(String id, String world, int x1, int y1, int z1, int x2, int y2, int z2) {
+            this.id = id; this.world = world;
+            minX = Math.min(x1, x2); maxX = Math.max(x1, x2);
+            minY = Math.min(y1, y2); maxY = Math.max(y1, y2);
+            minZ = Math.min(z1, z2); maxZ = Math.max(z1, z2);
+            box = new BoundingBox(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+        }
+    }
+
+    private final LinkedHashMap<String, NoDropRegion> noDropRegions = new LinkedHashMap<>();
+    private final HashMap<UUID, Location> noDropPos1 = new HashMap<>();
+    private final HashMap<UUID, Location> noDropPos2 = new HashMap<>();
+    private NamespacedKey noDropWandKey;
+    private int noDropCounter = 0;
+
+    private String noDropMsg(String body) { return uiMsg("Eşya Düşme", body); }
+    private String noDropErr(String body) { return uiErr("Eşya Düşme", body); }
+
+    private boolean inNoDropRegion(Location l) {
+        if (l == null || l.getWorld() == null) return false;
+        for (NoDropRegion r : noDropRegions.values())
+            if (r.world.equalsIgnoreCase(l.getWorld().getName()) && r.box.contains(l.toVector())) return true;
+        return false;
+    }
+
+    /** true: eşyalar korunur (düşmez). Dünya eşleşiyor ve ölüm eşya-düşme bölgesinin DIŞINDA. */
+    private boolean isNoDropDeath(Player dead) {
+        String wn = getConfig().getString("esyadusme.dunya", "mc.minerya.tc");
+        if (dead.getWorld() == null || !dead.getWorld().getName().equalsIgnoreCase(wn)) return false;
+        return !inNoDropRegion(dead.getLocation());
+    }
+
+    private boolean isNoDropWand(ItemStack it) {
+        if (it == null || it.getType() == Material.AIR || !it.hasItemMeta()) return false;
+        return it.getItemMeta().getPersistentDataContainer().has(noDropWandKey, PersistentDataType.BYTE);
+    }
+
+    private ItemStack buildNoDropWand() {
+        ItemStack axe = new ItemStack(Material.GOLDEN_AXE);
+        ItemMeta m = axe.getItemMeta();
+        m.setDisplayName(color("&r" + UI_ACCENT + "&lEşya Düşme Baltası"));
+        List<String> lore = new ArrayList<>();
+        lore.add(color("&r" + UI_DIM + "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+        lore.add(color("&r" + UI_SUB + "Sol tık " + UI_TEXT + "→ " + UI_SUB + "Birinci köşe"));
+        lore.add(color("&r" + UI_SUB + "Sağ tık " + UI_TEXT + "→ " + UI_SUB + "İkinci köşe"));
+        lore.add(color("&r" + UI_SUB + "Ardından " + UI_ACCENT + "/esyadusmeolustur"));
+        lore.add(color("&r" + UI_DIM + "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"));
+        m.setLore(lore);
+        m.setUnbreakable(true);
+        m.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE, ItemFlag.HIDE_ENCHANTS);
+        m.addEnchant(Enchantment.UNBREAKING, 1, true); // parıltı
+        m.getPersistentDataContainer().set(noDropWandKey, PersistentDataType.BYTE, (byte) 1);
+        axe.setItemMeta(m);
+        return axe;
+    }
+
+    private boolean handleNoDropCommand(CommandSender sender, String cmdName, String[] args) {
+        if (!(sender instanceof Player p)) { sender.sendMessage("Bu komut sadece oyuncular içindir."); return true; }
+        if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
+        UUID uid = p.getUniqueId();
+
+        if (cmdName.equals("esyadusmewand")) {
+            p.getInventory().addItem(buildNoDropWand());
+            p.sendMessage(noDropMsg("Eşya düşme baltası envanterine eklendi. " + hl("Sol tık") + " birinci, " + hl("sağ tık") + " ikinci köşe."));
+            roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.4f, 1.2f);
+            return true;
+        }
+
+        if (cmdName.equals("esyadusmeolustur")) {
+            Location l1 = noDropPos1.get(uid), l2 = noDropPos2.get(uid);
+            if (l1 == null || l2 == null) {
+                p.sendMessage(noDropErr("Önce baltayla iki köşeyi seç. Baltan yoksa " + hl("/esyadusmewand") + " kullan."));
+                return true;
+            }
+            if (l1.getWorld() == null || !l1.getWorld().equals(l2.getWorld())) {
+                p.sendMessage(noDropErr("İki köşe aynı dünyada olmalı."));
+                return true;
+            }
+            String id;
+            do { id = "bolge_" + (++noDropCounter); } while (noDropRegions.containsKey(id));
+            NoDropRegion r = new NoDropRegion(id, l1.getWorld().getName(),
+                l1.getBlockX(), l1.getBlockY(), l1.getBlockZ(), l2.getBlockX(), l2.getBlockY(), l2.getBlockZ());
+            noDropRegions.put(id, r);
+            saveNoDropRegions(true);
+            noDropPos1.remove(uid); noDropPos2.remove(uid);
+            p.sendMessage(noDropMsg("Bölge oluşturuldu: " + hl(id) + " (" + (r.maxX - r.minX + 1) + " x " + (r.maxY - r.minY + 1) + " x " + (r.maxZ - r.minZ + 1) + ")."));
+            p.sendMessage(noDropMsg("Artık yalnızca bu bölgede ölen oyuncuların eşyaları düşer. Diğer yerlerde envanter korunur."));
+            roomSound(p, Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.5f, 1.2f);
+            return true;
+        }
+
+        if (cmdName.equals("esyadusmesil")) {
+            if (args.length < 1) {
+                p.sendMessage(noDropMsg("Kullanım: " + hl("/esyadusmesil <id>") + ". Mevcut bölgeler: "
+                    + (noDropRegions.isEmpty() ? hl("yok") : hl(String.join(", ", noDropRegions.keySet())))));
+                return true;
+            }
+            if (noDropRegions.remove(args[0]) == null) { p.sendMessage(noDropErr("Bölge bulunamadı: " + hl(args[0]))); return true; }
+            saveNoDropRegions(true);
+            p.sendMessage(noDropMsg(hl(args[0]) + " bölgesi silindi."));
+            return true;
+        }
+        return true;
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onNoDropWand(PlayerInteractEvent e) {
+        if (e.getHand() != EquipmentSlot.HAND) return;
+        Action a = e.getAction();
+        if (a != Action.LEFT_CLICK_BLOCK && a != Action.RIGHT_CLICK_BLOCK) return;
+        Player p = e.getPlayer();
+        if (!isNoDropWand(p.getInventory().getItemInMainHand())) return;
+        e.setCancelled(true);
+        if (!p.hasPermission("loginx.admin") || e.getClickedBlock() == null) return;
+        Location loc = e.getClickedBlock().getLocation();
+        String pos = loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ();
+        if (a == Action.LEFT_CLICK_BLOCK) {
+            noDropPos1.put(p.getUniqueId(), loc);
+            p.sendMessage(noDropMsg("Birinci köşe: " + hl(pos)));
+        } else {
+            noDropPos2.put(p.getUniqueId(), loc);
+            p.sendMessage(noDropMsg("İkinci köşe: " + hl(pos)));
+        }
+        roomSound(p, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.35f, a == Action.LEFT_CLICK_BLOCK ? 1.2f : 1.5f);
+    }
+
+    private void saveNoDropRegions(boolean writeNow) {
+        getConfig().set("esyadusme.bolgeler", null);
+        for (NoDropRegion r : noDropRegions.values()) {
+            String b = "esyadusme.bolgeler." + r.id;
+            getConfig().set(b + ".world", r.world);
+            getConfig().set(b + ".min", r.minX + "," + r.minY + "," + r.minZ);
+            getConfig().set(b + ".max", r.maxX + "," + r.maxY + "," + r.maxZ);
+        }
+        if (writeNow) saveConfig();
+    }
+
+    private void loadNoDropRegions() {
+        noDropRegions.clear();
+        if (!getConfig().isConfigurationSection("esyadusme.bolgeler")) return;
+        for (String id : getConfig().getConfigurationSection("esyadusme.bolgeler").getKeys(false)) {
+            try {
+                String base = "esyadusme.bolgeler." + id;
+                String[] mn = getConfig().getString(base + ".min", "").split(",");
+                String[] mx = getConfig().getString(base + ".max", "").split(",");
+                noDropRegions.put(id, new NoDropRegion(id, getConfig().getString(base + ".world", "world"),
+                    Integer.parseInt(mn[0].trim()), Integer.parseInt(mn[1].trim()), Integer.parseInt(mn[2].trim()),
+                    Integer.parseInt(mx[0].trim()), Integer.parseInt(mx[1].trim()), Integer.parseInt(mx[2].trim())));
+                try { noDropCounter = Math.max(noDropCounter, Integer.parseInt(id.substring(id.lastIndexOf('_') + 1))); } catch (Exception ignored) {}
+            } catch (Exception ex) {
+                getLogger().warning("Eşya düşme bölgesi yüklenemedi (" + id + "): " + ex.getMessage());
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  OYUNCU İSİM HUD'I
+    //    [Klan adı]   -> yavaş animasyonlu renk geçişi (SimpleClans; klan yoksa boş satır)
+    //    Oyuncu adı   -> LuckPerms prefix'i + isim
+    //    Can 20       -> gerçek cana göre canlı güncellenir, renk canla birlikte değişir
+    //  Hepsi tek TextDisplay (textshadow: true), oyuncunun kendisine görünmez.
+    //  Config (hepsi opsiyonel): hud.aktif, hud.textshadow, hud.y-offset, hud.olcek,
+    //  hud.guncelleme-tick, hud.duvar-arkasi, hud.prefix-goster, hud.isim-rengi,
+    //  hud.vanilla-isim-gizle, hud.klan.renkler, hud.klan.hiz, hud.klan.yayilim,
+    //  hud.klan.gosterim (isim|tag), hud.klan.kalin
+    // ═════════════════════════════════════════════════════════════════════
+    private static final char SEC = '\u00a7';
+
+    private static class Hud {
+        TextDisplay display;
+        String last = "";
+        String clan = null, prefix = "";
+        long cacheAt = 0, teamAt = 0;
+    }
+
+    private NamespacedKey hudTag;
+    private final HashMap<UUID, Hud> huds = new HashMap<>();
+    private final HashMap<String, org.bukkit.scoreboard.Team.OptionStatus> hudForeignTeams = new HashMap<>();
+    private double hudPhase = 0;
+    private int hudPaletteCounter = 0;
+    private int[] hudPalette = {0x5ec8ff, 0x8f7bff, 0xff7ad9, 0xffb86b};
+
+    private void hudLoadPalette() {
+        List<String> l = getConfig().getStringList("hud.klan.renkler");
+        if (l == null || l.size() < 2) return;
+        try {
+            int[] out = new int[l.size()];
+            for (int i = 0; i < out.length; i++) out[i] = Integer.parseInt(l.get(i).replace("#", "").trim(), 16) & 0xFFFFFF;
+            hudPalette = out;
+        } catch (Exception ex) {
+            getLogger().warning("hud.klan.renkler okunamadı, varsayılan palet kullanılıyor.");
+        }
+    }
+
+    private static String hudHex(int rgb) {
+        String h = String.format("%06x", rgb & 0xFFFFFF);
+        StringBuilder sb = new StringBuilder().append(SEC).append('x');
+        for (char c : h.toCharArray()) sb.append(SEC).append(c);
+        return sb.toString();
+    }
+    private static int hudLerp(int a, int b, double f) {
+        int r = (int) Math.round(((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * f);
+        int g = (int) Math.round(((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * f);
+        int bl = (int) Math.round((a & 255) + ((b & 255) - (a & 255)) * f);
+        return (r << 16) | (g << 8) | bl;
+    }
+    private int hudSample(double t) {
+        int n = hudPalette.length;
+        t = t - Math.floor(t);
+        double pos = t * n;
+        int i0 = ((int) Math.floor(pos)) % n, i1 = (i0 + 1) % n;
+        double f = pos - Math.floor(pos);
+        f = f * f * (3 - 2 * f); // yumuşak geçiş
+        return hudLerp(hudPalette[i0], hudPalette[i1], f);
+    }
+
+    private String hudGradient(String text) {
+        double spread = getConfig().getDouble("hud.klan.yayilim", 0.09);
+        boolean bold = getConfig().getBoolean("hud.klan.kalin", true);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            sb.append(hudHex(hudSample(hudPhase + i * spread)));
+            if (bold) sb.append(SEC).append('l');
+            sb.append(text.charAt(i));
+        }
+        return sb.toString();
+    }
+
+    private int hudHealthColor(double ratio) {
+        ratio = Math.max(0, Math.min(1, ratio));
+        final int green = 0x5dff7a, yellow = 0xffd84d, red = 0xff4d4d;
+        return ratio >= 0.5 ? hudLerp(yellow, green, (ratio - 0.5) / 0.5) : hudLerp(red, yellow, ratio / 0.5);
+    }
+
+    private String hudBuildText(Player p, Hud h) {
+        StringBuilder sb = new StringBuilder();
+        // 1) Klan (yoksa görünmez boş satır — isim/can konumu hep sabit kalır)
+        if (h.clan != null && !h.clan.isEmpty()) sb.append(hudGradient(h.clan));
+        else sb.append(SEC).append("r ");
+        sb.append('\n');
+        // 2) Oyuncu adı
+        String nameColor = getConfig().getString("hud.isim-rengi", "#ffffff").replace("#", "");
+        int nc; try { nc = Integer.parseInt(nameColor, 16); } catch (Exception ex) { nc = 0xffffff; }
+        if (getConfig().getBoolean("hud.prefix-goster", true) && h.prefix != null && !h.prefix.isEmpty()) sb.append(h.prefix);
+        sb.append(hudHex(nc)).append(p.getName());
+        sb.append('\n');
+        // 3) Can
+        double max = Math.max(1.0, p.getMaxHealth());
+        int hp = (int) Math.ceil(Math.max(0, p.getHealth()));
+        sb.append(hudHex(0xe9eef6)).append(SEC).append('l').append("Can ")
+          .append(hudHex(hudHealthColor(p.getHealth() / max))).append(SEC).append('l').append(hp);
+        return sb.toString();
+    }
+
+    // ── SimpleClans (yansıtma — derleme bağımlılığı gerekmez) ──
+    private String hudClanName(Player p) {
+        try {
+            org.bukkit.plugin.Plugin sc = Bukkit.getPluginManager().getPlugin("SimpleClans");
+            if (sc == null || !sc.isEnabled()) return null;
+            Object cm = sc.getClass().getMethod("getClanManager").invoke(sc);
+            java.lang.reflect.Method gcp;
+            try {
+                Class<?> cmCls = Class.forName("net.sacredlabyrinth.phaed.simpleclans.managers.ClanManager", true, sc.getClass().getClassLoader());
+                gcp = cmCls.getMethod("getClanPlayer", Player.class);
+            } catch (ClassNotFoundException cnf) {
+                gcp = cm.getClass().getMethod("getClanPlayer", Player.class);
+            }
+            Object cp = gcp.invoke(cm, p);
+            if (cp == null) return null;
+            Object clan = cp.getClass().getMethod("getClan").invoke(cp);
+            if (clan == null) return null;
+            String mode = getConfig().getString("hud.klan.gosterim", "isim");
+            Object val = clan.getClass().getMethod(mode.equalsIgnoreCase("tag") ? "getTag" : "getName").invoke(clan);
+            if (val == null) return null;
+            String s = ChatColor.stripColor(color(String.valueOf(val))).trim();
+            return s.isEmpty() ? null : s;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // ── LuckPerms prefix (yansıtma) ──
+    private String hudPrefix(Player p) {
+        try {
+            org.bukkit.plugin.Plugin lp = Bukkit.getPluginManager().getPlugin("LuckPerms");
+            if (lp == null || !lp.isEnabled()) return "";
+            Class<?> provider = Class.forName("net.luckperms.api.LuckPermsProvider");
+            Object api = provider.getMethod("get").invoke(null);
+            Class<?> apiCls = Class.forName("net.luckperms.api.LuckPerms");
+            Object adapter = apiCls.getMethod("getPlayerAdapter", Class.class).invoke(api, Player.class);
+            Class<?> adapterCls = Class.forName("net.luckperms.api.platform.PlayerAdapter");
+            Object meta = adapterCls.getMethod("getMetaData", Object.class).invoke(adapter, p);
+            Class<?> metaCls = Class.forName("net.luckperms.api.cacheddata.CachedMetaData");
+            Object pre = metaCls.getMethod("getPrefix").invoke(meta);
+            if (pre == null) return "";
+            String s = color(String.valueOf(pre));
+            return s.endsWith(" ") ? s : s + " ";
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private boolean hudShouldShow(Player p) {
+        if (!p.isOnline() || p.isDead()) return false;
+        if (p.getGameMode() == GameMode.SPECTATOR) return false;
+        if (p.hasPotionEffect(org.bukkit.potion.PotionEffectType.INVISIBILITY)) return false;
+        if (p.hasMetadata("vanished")) return false;
+        return true;
+    }
+
+    private void hudRemoveDisplay(Hud h) {
+        if (h == null) return;
+        if (h.display != null) { try { h.display.remove(); } catch (Throwable ignored) {} }
+        h.display = null; h.last = "";
+    }
+
+    private void hudRemoveAll() {
+        for (Hud h : huds.values()) hudRemoveDisplay(h);
+        huds.clear();
+    }
+
+    private void hudEnsureDisplay(Player p, Hud h) {
+        TextDisplay d = h.display;
+        if (d != null && d.isValid() && d.getVehicle() != null && d.getVehicle().getUniqueId().equals(p.getUniqueId())) return;
+        hudRemoveDisplay(h);
+        try {
+            TextDisplay nd = p.getWorld().spawn(p.getLocation(), TextDisplay.class);
+            nd.setPersistent(false);
+            nd.getPersistentDataContainer().set(hudTag, PersistentDataType.BYTE, (byte) 1);
+            nd.setBillboard(Display.Billboard.CENTER);
+            nd.setAlignment(TextDisplay.TextAlignment.CENTER);
+            nd.setShadowed(getConfig().getBoolean("hud.textshadow", true));
+            nd.setSeeThrough(getConfig().getBoolean("hud.duvar-arkasi", false));
+            nd.setDefaultBackground(false);
+            nd.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            nd.setLineWidth(400);
+            nd.setViewRange(1.0f);
+            nd.setBrightness(new Display.Brightness(15, 15));
+            float s = (float) getConfig().getDouble("hud.olcek", 1.0);
+            float y = (float) getConfig().getDouble("hud.y-offset", 0.42);
+            nd.setTransformation(new org.bukkit.util.Transformation(
+                new org.joml.Vector3f(0f, y, 0f), new org.joml.AxisAngle4f(),
+                new org.joml.Vector3f(s, s, s), new org.joml.AxisAngle4f()));
+            p.hideEntity(this, nd);   // oyuncu kendi HUD'ını görmesin
+            p.addPassenger(nd);
+            h.display = nd;
+            h.last = "";
+        } catch (Throwable t) {
+            h.display = null;
+        }
+    }
+
+    private void hudHideVanilla(Player p) {
+        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", true)) return;
+        try {
+            org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
+            org.bukkit.scoreboard.Team t = sb.getEntryTeam(p.getName());
+            if (t == null) {
+                t = sb.getTeam("lxhud");
+                if (t == null) {
+                    t = sb.registerNewTeam("lxhud");
+                    t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
+                }
+                t.addEntry(p.getName());
+            } else if (t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY) != org.bukkit.scoreboard.Team.OptionStatus.NEVER) {
+                hudForeignTeams.putIfAbsent(t.getName(), t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY));
+                t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void hudResetTeams() {
+        try {
+            org.bukkit.scoreboard.Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam("lxhud");
+            if (t != null) t.unregister();
+        } catch (Throwable ignored) {}
+    }
+
+    private void hudRestoreTeams() {
+        try {
+            org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
+            org.bukkit.scoreboard.Team t = sb.getTeam("lxhud");
+            if (t != null) t.unregister();
+            for (Map.Entry<String, org.bukkit.scoreboard.Team.OptionStatus> en : hudForeignTeams.entrySet()) {
+                org.bukkit.scoreboard.Team ft = sb.getTeam(en.getKey());
+                if (ft != null) ft.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, en.getValue());
+            }
+            hudForeignTeams.clear();
+        } catch (Throwable ignored) {}
+    }
+
+    private void hudSweepOrphans() {
+        for (World w : Bukkit.getWorlds()) {
+            for (TextDisplay td : w.getEntitiesByClass(TextDisplay.class)) {
+                if (td.getPersistentDataContainer().has(hudTag, PersistentDataType.BYTE)) td.remove();
+            }
+        }
+    }
+
+    @EventHandler
+    public void onHudEntitiesLoad(org.bukkit.event.world.EntitiesLoadEvent e) {
+        if (hudTag == null) return;
+        for (Entity ent : e.getEntities()) {
+            if (ent instanceof TextDisplay td && td.getPersistentDataContainer().has(hudTag, PersistentDataType.BYTE)) td.remove();
+        }
+    }
+
+    private net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer hudSer;
+    /** §x§r§r§g§g§b§b hex biçimini ve satır sonlarını doğru çözen serileştirici. */
+    private net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer hudSerializer() {
+        if (hudSer == null) {
+            hudSer = net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.builder()
+                .character(SEC).hexColors().useUnusualXRepeatedCharacterHexFormat().build();
+        }
+        return hudSer;
+    }
+
+    private void hudTick() {
+        if (!getConfig().getBoolean("hud.aktif", true)) {
+            if (!huds.isEmpty()) { hudRemoveAll(); hudRestoreTeams(); }
+            return;
+        }
+        if (++hudPaletteCounter >= 100) { hudPaletteCounter = 0; hudLoadPalette(); }
+        hudPhase = (hudPhase + getConfig().getDouble("hud.klan.hiz", 0.012)) % 1.0;
+        long nowMs = System.currentTimeMillis();
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            Hud h = huds.computeIfAbsent(p.getUniqueId(), k -> new Hud());
+            if (!hudShouldShow(p)) { hudRemoveDisplay(h); continue; }
+            if (nowMs - h.cacheAt > 1000L) {
+                h.clan = hudClanName(p);
+                h.prefix = hudPrefix(p);
+                h.cacheAt = nowMs;
+            }
+            if (nowMs - h.teamAt > 2000L) { hudHideVanilla(p); h.teamAt = nowMs; }
+            hudEnsureDisplay(p, h);
+            if (h.display == null) continue;
+            String text = hudBuildText(p, h);
+            if (!text.equals(h.last)) {
+                h.display.text(hudSerializer().deserialize(text));
+                h.last = text;
+            }
+        }
+        // Çıkmış oyuncuların kalıntıları
+        huds.entrySet().removeIf(en -> {
+            Player op = Bukkit.getPlayer(en.getKey());
+            if (op == null || !op.isOnline()) { hudRemoveDisplay(en.getValue()); return true; }
+            return false;
+        });
+    }
+
+    @EventHandler
+    public void onHudQuit(PlayerQuitEvent e) {
+        Hud h = huds.remove(e.getPlayer().getUniqueId());
+        hudRemoveDisplay(h);
+        try {
+            org.bukkit.scoreboard.Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam("lxhud");
+            if (t != null) t.removeEntry(e.getPlayer().getName());
+        } catch (Throwable ignored) {}
+    }
+
+    // Işınlanma / dünya değişimi: yolcu düşer — kısa süre sonra yeniden bağla
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onHudTeleport(PlayerTeleportEvent e) { hudRefreshLater(e.getPlayer()); }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onHudWorldChange(PlayerChangedWorldEvent e) { hudRefreshLater(e.getPlayer()); }
+
+    private void hudRefreshLater(Player p) {
+        new BukkitRunnable() {
+            @Override public void run() {
+                if (!p.isOnline()) return;
+                Hud h = huds.get(p.getUniqueId());
+                if (h == null || !hudShouldShow(p)) return;
+                hudEnsureDisplay(p, h);
+            }
+        }.runTaskLater(this, 2L);
+    }
+
 }
