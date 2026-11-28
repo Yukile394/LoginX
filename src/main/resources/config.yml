@@ -43,19 +43,19 @@ oda:
 hud:
   aktif: true
   textshadow: true
-  y-offset: 0.42
-  olcek: 1.0
+  y-offset: 0.2
+  olcek: 0.85
   guncelleme-tick: 4
   duvar-arkasi: false
   prefix-goster: true
   isim-rengi: "#ffffff"
-  vanilla-isim-gizle: true
+  vanilla-isim-gizle: false
   klan:
     gosterim: "isim"
-    kalin: true
+    kalin: false
     hiz: 0.012
     yayilim: 0.09
-    renkler: ["#5ec8ff", "#8f7bff", "#ff7ad9", "#ffb86b"]
+    renkler: ["#ff9ecb", "#ffffff", "#ff7ab6", "#ffffff"]
 
 # --- KASA / HOLOGRAM VERİLERİ ---
 # Buradan sonrası plugin tarafından otomatik yönetilir (crates, crateColors, kontyeri,
