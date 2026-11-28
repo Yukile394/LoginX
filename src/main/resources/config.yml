@@ -36,6 +36,12 @@ oda:
   hub-komutu: "hub {oyuncu}"
   bitis-bekleme: 5
 
+# --- DUEL / 1V1 ROOM KOMUT KİLİDİ ---
+# lobi-komutlari: düello/oda SONUCU belli olduktan sonra (kazanan geri sayımı, ölüm sonrası kilit) serbest bırakılan komutlar.
+# Düello sürerken kilit aynen devam eder. Boş bırakılırsa varsayılan: hub, lobby, spawn
+duel:
+  lobi-komutlari: [hub, lobby, spawn]
+
 # --- OYUNCU İSİM HUD ---
 # y-offset: yükseklik, olcek: yazı boyutu, guncelleme-tick: yenileme hızı
 # klan.renkler: yavaş geçiş yapan renkler (hex), klan.hiz: küçük = daha yavaş
@@ -46,6 +52,7 @@ hud:
   y-offset: 0.2
   olcek: 0.85
   guncelleme-tick: 4
+  takip-tick: 2        # isim yazısının oyuncuyu takip hızı (tick). Yazı artık oyuncuya yolcu olarak bindirilmez; küçük = daha akıcı, büyük = daha az yük
   duvar-arkasi: false
   prefix-goster: true
   isim-rengi: "#ffffff"
