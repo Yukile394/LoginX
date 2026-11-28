@@ -144,6 +144,10 @@ public class LoginX extends JavaPlugin implements Listener {
     private NamespacedKey lootChestTag;   // bu item bir duel sandığı mı (marker)
     private NamespacedKey lootChestData;  // içindeki eşyaların serileştirilmiş (Base64) hali
     private NamespacedKey lootChestOwner; // eşyaların sahibinin adı (lore/yeniden oluşturma için)
+    private NamespacedKey lootChestId;    // sandığa özel benzersiz kimlik: kopyalar yığılmaz, her GUI oturumu tek bir sandığa bağlıdır
+    private NamespacedKey lootChestVer;   // içerik sürümü: her alımda +1; eski sürümlü bir kopya açılamaz
+    private final HashMap<UUID, UUID>    lootChestOpenBy   = new HashMap<>(); // sandık kimliği -> şu an GUI'sini açık tutan oyuncu
+    private final HashMap<UUID, Integer> lootChestKnownVer = new HashMap<>(); // bu açılışta görülen en yeni sürüm (boşalan sandık = Integer.MAX_VALUE)
     private NamespacedKey duelGuiTag;     // duel menülerindeki butonların kimliği (arena:<id>, toggle:<anahtar>, confirm)
 
     // ─── Duel/1v1 Room ölüm sonrası komut kilidi: uid -> ölüm zamanı (ms) ───
@@ -329,6 +333,8 @@ public class LoginX extends JavaPlugin implements Listener {
         lootChestTag = new NamespacedKey(this, "duel_sandigi");
         lootChestData = new NamespacedKey(this, "duel_sandigi_veri");
         lootChestOwner = new NamespacedKey(this, "duel_sandigi_sahibi");
+        lootChestId = new NamespacedKey(this, "duel_sandigi_id");
+        lootChestVer = new NamespacedKey(this, "duel_sandigi_surum");
         dailyRewardDayTag = new NamespacedKey(this, "gunluk_odul_gun");
         duelGuiTag = new NamespacedKey(this, "duel_menu");
         arenaWandTag = new NamespacedKey(this, "arena_wand");
@@ -1809,6 +1815,18 @@ public class LoginX extends JavaPlugin implements Listener {
         if (!ok) {
             try { p.performCommand("hub"); } catch (Exception ignored) {}
         }
+        // Konsol komutu "bulundu" sayılsa bile eklenti oyuncuyu taşımamış olabilir (konsol söz dizimi farklı olabilir):
+        // 10 tick sonra hâlâ odadaysa oyuncunun kendi /hub'ı denenir.
+        final boolean consoleHandled = ok;
+        new BukkitRunnable() {
+            @Override public void run() {
+                Player q = Bukkit.getPlayer(uid);
+                if (q == null || !q.isOnline() || q.isDead()) return;
+                if (consoleHandled && roomAt(q.getLocation()) != null) {
+                    try { q.performCommand("hub"); } catch (Exception ignored) {}
+                }
+            }
+        }.runTaskLater(this, 10L);
         // Güvenlik ağı: hub çalışmadıysa oyuncu odada takılı kalmasın
         new BukkitRunnable() {
             @Override public void run() {
@@ -4765,6 +4783,12 @@ public class LoginX extends JavaPlugin implements Listener {
         if (!anyItem) return; // eşya yoksa sandık oluşturmaya gerek yok
 
         ItemStack chest = buildLootChestItem(cloned, dead.getName());
+        if (chest == null) { // serileştirme başarısız: eşyalar kaybolmasın, ölüm noktasına bırak
+            for (ItemStack it : cloned) {
+                if (it != null && it.getType() != Material.AIR) fallbackLoc.getWorld().dropItem(fallbackLoc, it);
+            }
+            return;
+        }
 
         if (recipient != null && recipient.isOnline()) {
             HashMap<Integer, ItemStack> leftover = new HashMap<>(recipient.getInventory().addItem(chest));
@@ -4797,13 +4821,33 @@ public class LoginX extends JavaPlugin implements Listener {
         return item.getItemMeta().getPersistentDataContainer().has(lootChestTag, PersistentDataType.BYTE);
     }
 
-    /** İçeriği (36 slot) ve sahibini vererek profesyonel görünümlü, sahte bir Duel Sandığı itemi inşa eder. */
-    private ItemStack buildLootChestItem(ItemStack[] contents36, String ownerName) {
-        int count = 0;
-        for (ItemStack it : contents36) if (it != null && it.getType() != Material.AIR) count++;
+    /** Sandığın benzersiz kimliği (eski/kimliksiz sandıkta null). */
+    private UUID lootChestIdOf(ItemStack item) {
+        if (!isLootChestItem(item)) return null;
+        String sid = item.getItemMeta().getPersistentDataContainer().get(lootChestId, PersistentDataType.STRING);
+        if (sid == null) return null;
+        try { return UUID.fromString(sid); } catch (IllegalArgumentException ex) { return null; }
+    }
 
-        ItemStack chest = new ItemStack(Material.CHEST, 1);
-        ItemMeta im = chest.getItemMeta();
+    private int lootChestVersionOf(ItemStack item) {
+        if (!isLootChestItem(item)) return 0;
+        Integer v = item.getItemMeta().getPersistentDataContainer().get(lootChestVer, PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    private String lootChestOwnerOf(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return "?";
+        String o = item.getItemMeta().getPersistentDataContainer().get(lootChestOwner, PersistentDataType.STRING);
+        return o == null ? "?" : o;
+    }
+
+    /** Sandık itemin meta'sını (isim, lore, kimlik, sürüm, serileştirilmiş içerik) yazar. Serileştirme başarısızsa false döner ve meta'ya dokunmaz. */
+    private boolean applyLootChestMeta(ItemMeta im, ItemStack[] contents, String ownerName, UUID id, int version) {
+        String serialized = serializeItems(contents);
+        if (serialized == null) return false;
+        int count = 0;
+        for (ItemStack it : contents) if (it != null && it.getType() != Material.AIR && !isLootChestFiller(it)) count++;
+
         // İsim kalın DEĞİL — sade, profesyonel tek ton
         im.setDisplayName(color("&r" + UI_TEXT + ownerName + UI_SUB + " eşyaları"));
         List<String> lore = new ArrayList<>();
@@ -4814,23 +4858,87 @@ public class LoginX extends JavaPlugin implements Listener {
         lore.add(color(""));
         lore.add(color("&r" + UI_DIM + "Sağ tıkla aç. Yere konulamaz."));
         im.setLore(lore);
+        im.setMaxStackSize(1); // yığılamaz: yığın bölme ile kopyalama yolu kapalı
 
         im.getPersistentDataContainer().set(lootChestTag, PersistentDataType.BYTE, (byte) 1);
         im.getPersistentDataContainer().set(lootChestOwner, PersistentDataType.STRING, ownerName);
-        String serialized = serializeItems(contents36);
-        im.getPersistentDataContainer().set(lootChestData, PersistentDataType.STRING, serialized == null ? "" : serialized);
+        im.getPersistentDataContainer().set(lootChestId, PersistentDataType.STRING, id.toString());
+        im.getPersistentDataContainer().set(lootChestVer, PersistentDataType.INTEGER, version);
+        im.getPersistentDataContainer().set(lootChestData, PersistentDataType.STRING, serialized);
+        return true;
+    }
+
+    /** İçeriği (41 slot) ve sahibini vererek sahte bir Duel Sandığı itemi inşa eder; her sandığın kendine ait benzersiz kimliği vardır. Serileştirme başarısızsa null. */
+    private ItemStack buildLootChestItem(ItemStack[] contents36, String ownerName) {
+        ItemStack chest = new ItemStack(Material.CHEST, 1);
+        ItemMeta im = chest.getItemMeta();
+        UUID id = UUID.randomUUID();
+        if (!applyLootChestMeta(im, contents36, ownerName, id, 1)) return null;
         chest.setItemMeta(im);
+        lootChestKnownVer.put(id, 1);
         return chest;
     }
 
-    /** Kapanan sandık GUI'sindeki güncel içerikle itemi yeniden inşa eder (sahibi bilgisi korunur). */
-    private ItemStack rebuildLootChestItem(ItemStack existingItem, ItemStack[] newContents36) {
-        String owner = "?";
-        if (existingItem != null && existingItem.hasItemMeta()) {
-            String stored = existingItem.getItemMeta().getPersistentDataContainer().get(lootChestOwner, PersistentDataType.STRING);
-            if (stored != null) owner = stored;
+    /** Oyuncunun envanterinde (zırh/offhand dahil) bu kimlikteki sandığın slotunu bulur; yoksa -1. */
+    private int findLootChestSlot(Player p, UUID id) {
+        ItemStack[] c = p.getInventory().getContents();
+        for (int i = 0; i < c.length; i++) if (id.equals(lootChestIdOf(c[i]))) return i;
+        return -1;
+    }
+
+    /**
+     * Eski (kimliksiz) veya yığılmış sandıklara benzersiz kimlik verir. Yığındaki her fazla kopya ayrı bir
+     * sandığa dönüşür (hiçbiri kaybolmaz). Okunamayan sandıkta null döner ve hiçbir şeye dokunulmaz.
+     */
+    private UUID ensureLootChestId(Player p, int slot) {
+        ItemStack it = p.getInventory().getItem(slot);
+        if (!isLootChestItem(it)) return null;
+        UUID id = lootChestIdOf(it);
+        int amount = it.getAmount();
+        if (id != null && amount == 1) return id;
+
+        String data = it.getItemMeta().getPersistentDataContainer().get(lootChestData, PersistentDataType.STRING);
+        ItemStack[] contents = (data == null || data.isEmpty()) ? new ItemStack[41] : deserializeItems(data);
+        if (contents == null) return null;
+        String owner = lootChestOwnerOf(it);
+        ItemStack first = buildLootChestItem(contents, owner);
+        if (first == null) return null;
+        p.getInventory().setItem(slot, first);
+        for (int i = 1; i < amount; i++) {
+            ItemStack extra = buildLootChestItem(contents, owner);
+            if (extra == null) break;
+            for (ItemStack rem : p.getInventory().addItem(extra).values()) {
+                p.getWorld().dropItem(p.getLocation(), rem).setPickupDelay(20);
+            }
         }
-        return buildLootChestItem(newContents36, owner);
+        return lootChestIdOf(first);
+    }
+
+    /**
+     * GUI'nin yeni içeriğini sandık itemine ANINDA yazar (her alımda). Böylece sandık itemi hiçbir an GUI'den eski/dolu kalmaz.
+     * -1: sandık envanterde yok / eski sürüm / yazılamadı (hiçbir şey değişmedi), 0: güncellendi, 1: boşaldı (item silindi).
+     */
+    private int commitLootChest(Player p, UUID id, ItemStack[] next) {
+        int chestSlot = findLootChestSlot(p, id);
+        if (chestSlot < 0) return -1;
+        ItemStack cur = p.getInventory().getItem(chestSlot);
+        int ver = lootChestVersionOf(cur);
+        Integer known = lootChestKnownVer.get(id);
+        if (known != null && ver < known) return -1;
+
+        boolean empty = true;
+        for (ItemStack it : next) if (it != null && it.getType() != Material.AIR) { empty = false; break; }
+        if (empty) {
+            p.getInventory().setItem(chestSlot, null);
+            lootChestKnownVer.put(id, Integer.MAX_VALUE); // bu kimlikteki her kopya artık geçersiz
+            return 1;
+        }
+        ItemMeta im = cur.getItemMeta();
+        if (!applyLootChestMeta(im, next, lootChestOwnerOf(cur), id, ver + 1)) return -1;
+        cur.setItemMeta(im);
+        p.getInventory().setItem(chestSlot, cur);
+        lootChestKnownVer.put(id, ver + 1);
+        return 0;
     }
 
     /** ItemStack[] -> Base64 (BukkitObjectOutputStream ile) */
@@ -4861,15 +4969,16 @@ public class LoginX extends JavaPlugin implements Listener {
             return items;
         } catch (Exception ex) {
             getLogger().warning("Duel sandığı okunamadı: " + ex.getMessage());
-            return new ItemStack[36];
+            return null; // boş sandık sanılıp silinmesin diye null
         }
     }
 
-    /** Duel sandığı GUI'sinin holder'ı — hangi oyuncunun hangi slotundaki iteme ait olduğunu taşır. */
+    /** Duel sandığı GUI'sinin holder'ı — GUI'yi tek bir sandık kimliğine bağlar (slot numarasına değil). */
     private static class LootChestHolder implements InventoryHolder {
-        final int slot;
-        LootChestHolder(int slot) { this.slot = slot; }
-        @Override public Inventory getInventory() { return null; }
+        final UUID chestId;
+        Inventory inv;
+        LootChestHolder(UUID chestId) { this.chestId = chestId; }
+        @Override public Inventory getInventory() { return inv; }
     }
 
     /** Boş sandık slotlarını dolduran gri, Silvera markalı dolgu camı üretir. Alınamaz/yerine eşya konulamaz. */
@@ -4902,78 +5011,203 @@ public class LoginX extends JavaPlugin implements Listener {
         if (managed) e.setCancelled(true);
     }
 
+    /** Oyuncunun şu an bir Duel Sandığı GUI'si açık mı? */
+    private boolean lootChestOpenFor(Player p) {
+        return p.getOpenInventory().getTopInventory().getHolder() instanceof LootChestHolder;
+    }
+
     /** Sandığı sağ tıklayan oyuncuya, içeriğiyle dolu sahte bir GUI açar. Boş slotlar gri camla doldurulur. */
     private void openLootChest(Player p, ItemStack chestItem, int slot) {
-        String data = chestItem.getItemMeta().getPersistentDataContainer().get(lootChestData, PersistentDataType.STRING);
+        if (lootChestOpenFor(p)) return;
+        UUID id = ensureLootChestId(p, slot);
+        if (id == null) {
+            p.sendActionBar(color(UI_BAD + "Bu sandık okunamadı. Bir yetkiliye haber ver."));
+            return;
+        }
+        ItemStack item = p.getInventory().getItem(slot);
+        int ver = lootChestVersionOf(item);
+        Integer known = lootChestKnownVer.get(id);
+        if (known != null && ver < known) {
+            p.sendMessage(color(UI_BAD + "Bu sandık geçersiz (eski bir kopya). Bir yetkiliye haber ver."));
+            getLogger().warning("Eski sürümlü Duel Sandığı reddedildi: oyuncu=" + p.getName() + " id=" + id
+                + " sürüm=" + ver + " bilinen=" + known);
+            return;
+        }
+        UUID openBy = lootChestOpenBy.get(id);
+        if (openBy != null && !openBy.equals(p.getUniqueId())) {
+            p.sendActionBar(color(UI_BAD + "Bu sandık şu an başka biri tarafından açık."));
+            return;
+        }
+        String data = item.getItemMeta().getPersistentDataContainer().get(lootChestData, PersistentDataType.STRING);
         ItemStack[] contents = (data == null || data.isEmpty()) ? new ItemStack[41] : deserializeItems(data);
+        if (contents == null) {
+            p.sendActionBar(color(UI_BAD + "Bu sandık okunamadı. Bir yetkiliye haber ver."));
+            return;
+        }
+        boolean any = false;
+        for (int i = 0; i < 41 && i < contents.length; i++) {
+            if (contents[i] != null && contents[i].getType() != Material.AIR) { any = true; break; }
+        }
+        if (!any) { // içi boş sandık: sil
+            p.getInventory().setItem(slot, null);
+            lootChestKnownVer.put(id, Integer.MAX_VALUE);
+            p.sendMessage(color("&#aaaaaa&oDüel sandığı boşaldı ve kayboldu."));
+            return;
+        }
+        lootChestKnownVer.merge(id, ver, Math::max);
+
+        LootChestHolder holder = new LootChestHolder(id);
         // 45 slot (5 satır): 0-35 ana envanter, 36-39 zırh, 40 offhand — geri kalan slotlar dolgu cam
-        Inventory gui = Bukkit.createInventory(new LootChestHolder(slot), 45, color(UI_SUB + "Duel Sandığı"));
+        Inventory gui = Bukkit.createInventory(holder, 45, color(UI_SUB + "Duel Sandığı"));
+        holder.inv = gui;
         for (int i = 0; i < 45; i++) {
             ItemStack it = (i < 41 && i < contents.length) ? contents[i] : null;
-            if (it != null && it.getType() != Material.AIR) {
-                gui.setItem(i, it);
-            } else {
-                gui.setItem(i, lootChestFillerItem());
-            }
+            if (it != null && it.getType() != Material.AIR) gui.setItem(i, it);
+            else gui.setItem(i, lootChestFillerItem());
         }
+        lootChestOpenBy.put(id, p.getUniqueId());
         p.openInventory(gui);
         p.playSound(p.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
-    /** Duel sandığı GUI'sine eşya koymayı ve dolgu camını almayı engeller — sadece içindeki eşyaları almaya izin verir. */
-    @EventHandler(priority = EventPriority.HIGH)
+    /**
+     * Sandık GUI'si açıkken HİÇBİR tıklama vanilla işlemeye gitmez: alt envanter tamamen kilitli, imleç (cursor) hiç kullanılmaz.
+     * Üstteki bir eşyaya sol/sağ/shift tık = o yığını envantere AL. Alma işlemi sandık itemine anında yazılır.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onLootChestClick(InventoryClickEvent ev) {
-        if (!(ev.getInventory().getHolder() instanceof LootChestHolder)) return;
-        Inventory top = ev.getInventory();
-        int rawSlot = ev.getRawSlot();
-        boolean clickedTop = rawSlot >= 0 && rawSlot < top.getSize();
-        ItemStack clickedItem = ev.getCurrentItem();
-
-        if (clickedTop) {
-            // Dolgu camı hiçbir şekilde alınamaz
-            if (isLootChestFiller(clickedItem)) {
-                ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_SUB + "Burası boş."));
-                return;
-            }
-            // Sandığa eşya koymaya yönelik her türlü aksiyonu engelle — sadece alma serbest
-            switch (ev.getAction()) {
-                case PLACE_ALL, PLACE_SOME, PLACE_ONE, SWAP_WITH_CURSOR, HOTBAR_SWAP, HOTBAR_MOVE_AND_READD, UNKNOWN -> {
-                    ev.setCancelled(true);
-                    if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
-                    return;
-                }
-                default -> { }
-            }
-            // Alma işleminden sonra boşalan slota dolgu camını koy
-            if (clickedItem != null && clickedItem.getType() != Material.AIR) {
-                final int slotIdx = rawSlot;
-                Bukkit.getScheduler().runTask(this, () -> {
-                    ItemStack now = top.getItem(slotIdx);
-                    if (now == null || now.getType() == Material.AIR) top.setItem(slotIdx, lootChestFillerItem());
-                });
-            }
-        } else {
-            // Alt envanter (oyuncu envanteri) tıklaması: shift-click ile sandığa eşya atmayı engelle
-            if (ev.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY && clickedItem != null && clickedItem.getType() != Material.AIR) {
-                ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
-            }
+        Inventory top = ev.getView().getTopInventory();
+        if (!(top.getHolder() instanceof LootChestHolder holder)) return;
+        ev.setCancelled(true);
+        if (!(ev.getWhoClicked() instanceof Player p)) return;
+        int raw = ev.getRawSlot();
+        if (raw < 0 || raw >= top.getSize()) {
+            p.sendActionBar(color(UI_BAD + "Sandık açıkken envanterine dokunamazsın."));
+            return;
+        }
+        switch (ev.getClick()) {
+            case LEFT, RIGHT, SHIFT_LEFT, SHIFT_RIGHT -> lootChestTake(p, holder, top, raw);
+            default -> { }
         }
     }
 
-    /** Sandık GUI'sine eşya sürükleyerek koymayı engeller. */
-    @EventHandler(priority = EventPriority.HIGH)
-    public void onLootChestDrag(InventoryDragEvent ev) {
-        if (!(ev.getInventory().getHolder() instanceof LootChestHolder)) return;
-        int topSize = ev.getInventory().getSize();
-        for (int rawSlot : ev.getRawSlots()) {
-            if (rawSlot < topSize) {
-                ev.setCancelled(true);
-                if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Bu sandığa eşya koyamazsın."));
-                return;
+    /** GUI'deki bir yığını oyuncuya verir: önce sandık kaydı güncellenir, sonra eşya verilir (aynı tick). */
+    private void lootChestTake(Player p, LootChestHolder holder, Inventory gui, int slot) {
+        if (slot >= 41) return; // 41-44 yalnızca dolgu
+        ItemStack it = gui.getItem(slot);
+        if (it == null || it.getType() == Material.AIR || isLootChestFiller(it)) {
+            p.sendActionBar(color(UI_SUB + "Burası boş."));
+            return;
+        }
+        int fit = lootChestFit(p, it);
+        if (fit <= 0) {
+            p.sendActionBar(color(UI_BAD + "Envanterin dolu."));
+            return;
+        }
+
+        // Alım sonrası sandığın içeriği
+        ItemStack[] next = new ItemStack[41];
+        for (int i = 0; i < 41; i++) {
+            ItemStack cur = gui.getItem(i);
+            if (cur == null || cur.getType() == Material.AIR || isLootChestFiller(cur)) continue;
+            if (i == slot) {
+                if (fit >= cur.getAmount()) continue;
+                ItemStack rest = cur.clone();
+                rest.setAmount(cur.getAmount() - fit);
+                next[i] = rest;
+            } else {
+                next[i] = cur.clone();
             }
         }
+
+        int result = commitLootChest(p, holder.chestId, next);
+        if (result < 0) {
+            p.sendMessage(color(UI_BAD + "Bu sandık artık geçerli değil. Menü kapatılıyor."));
+            Bukkit.getScheduler().runTask(this, () -> p.closeInventory());
+            return;
+        }
+
+        ItemStack give = it.clone();
+        give.setAmount(fit);
+        for (ItemStack rem : p.getInventory().addItem(give).values()) { // sığacağı önceden hesaplandı; yine de eşya asla kaybolmaz
+            p.getWorld().dropItem(p.getLocation(), rem).setPickupDelay(0);
+        }
+        if (fit >= it.getAmount()) {
+            gui.setItem(slot, lootChestFillerItem());
+        } else {
+            ItemStack rest = it.clone();
+            rest.setAmount(it.getAmount() - fit);
+            gui.setItem(slot, rest);
+        }
+        p.playSound(p.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.5f, 1.2f);
+
+        if (result == 1) {
+            p.sendMessage(color("&#aaaaaa&oDüel sandığı boşaldı ve kayboldu."));
+            p.playSound(p.getLocation(), Sound.BLOCK_CHEST_CLOSE, 0.6f, 0.9f);
+            Bukkit.getScheduler().runTask(this, () -> p.closeInventory());
+        }
+    }
+
+    /** Verilen yığından envantere kaç adet sığar (simülasyon; envanteri değiştirmez). */
+    private int lootChestFit(Player p, ItemStack it) {
+        int need = it.getAmount();
+        int max = it.getMaxStackSize();
+        int fit = 0;
+        for (ItemStack s : p.getInventory().getStorageContents()) {
+            if (s == null || s.getType() == Material.AIR) fit += max;
+            else if (s.isSimilar(it) && s.getAmount() < s.getMaxStackSize()) fit += s.getMaxStackSize() - s.getAmount();
+            if (fit >= need) return need;
+        }
+        return Math.min(fit, need);
+    }
+
+    /** Sandık GUI'sinde sürüklemenin (alt veya üst envanter) her türlüsü iptal. */
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestDrag(InventoryDragEvent ev) {
+        if (!(ev.getView().getTopInventory().getHolder() instanceof LootChestHolder)) return;
+        ev.setCancelled(true);
+        if (ev.getWhoClicked() instanceof Player pl) pl.sendActionBar(color(UI_BAD + "Sandık açıkken envanterine dokunamazsın."));
+    }
+
+    // Creative istemci tıkları ayrı bir olay: sandık açıkken onu da kapat (item kopyalama yolu)
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestCreative(org.bukkit.event.inventory.InventoryCreativeEvent ev) {
+        if (ev.getView().getTopInventory().getHolder() instanceof LootChestHolder) ev.setCancelled(true);
+    }
+
+    // ── Sandık GUI'si açıkken envanter değiştiren diğer her yol kilitli ──
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestDrop(PlayerDropItemEvent ev) {
+        if (lootChestOpenFor(ev.getPlayer())) ev.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestSwapHands(PlayerSwapHandItemsEvent ev) {
+        if (lootChestOpenFor(ev.getPlayer())) ev.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestHeldChange(PlayerItemHeldEvent ev) {
+        if (lootChestOpenFor(ev.getPlayer())) ev.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestPickup(EntityPickupItemEvent ev) {
+        if (ev.getEntity() instanceof Player pl && lootChestOpenFor(pl)) ev.setCancelled(true);
+    }
+
+    // Sandık itemi craft malzemesi olamaz (veri kaybolur / kopya yolu olmasın)
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLootChestCraft(org.bukkit.event.inventory.PrepareItemCraftEvent ev) {
+        for (ItemStack it : ev.getInventory().getMatrix()) {
+            if (isLootChestItem(it)) { ev.getInventory().setResult(null); return; }
+        }
+    }
+
+    @EventHandler
+    public void onLootChestQuit(PlayerQuitEvent ev) {
+        UUID u = ev.getPlayer().getUniqueId();
+        lootChestOpenBy.values().removeIf(v -> v.equals(u));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -4997,31 +5231,13 @@ public class LoginX extends JavaPlugin implements Listener {
         openLootChest(p, item, p.getInventory().getHeldItemSlot());
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onLootChestClose(InventoryCloseEvent ev) {
         if (!(ev.getInventory().getHolder() instanceof LootChestHolder holder)) return;
-        if (!(ev.getPlayer() instanceof Player p)) return;
-        ItemStack current = p.getInventory().getItem(holder.slot);
-        if (!isLootChestItem(current)) return; // slot değişmiş/eşya kaybolmuş — güvenlik için dokunma
-        ItemStack[] guiContents = ev.getInventory().getContents();
-
-        // Dolgu camlarını yok say, sadece gerçek eşyaları 41 slotluk düzene geri yaz
-        ItemStack[] updated = new ItemStack[41];
-        boolean empty = true;
-        for (int i = 0; i < 41 && i < guiContents.length; i++) {
-            ItemStack it = guiContents[i];
-            if (it != null && it.getType() != Material.AIR && !isLootChestFiller(it)) {
-                updated[i] = it;
-                empty = false;
-            }
-        }
-        if (empty) {
-            p.getInventory().setItem(holder.slot, null);
-            p.sendMessage(color("&#aaaaaa&oDüel sandığı boşaldı ve kayboldu."));
-            p.playSound(p.getLocation(), Sound.BLOCK_CHEST_CLOSE, 0.6f, 0.9f);
-            return;
-        }
-        p.getInventory().setItem(holder.slot, rebuildLootChestItem(current, updated));
+        // İçerik her alımda anında sandık itemine yazıldığı için kapanışta envantere HİÇBİR ŞEY yazılmaz
+        // (eski "kapanışta geri yaz" mantığı dupe'un kaynağıydı).
+        lootChestOpenBy.remove(holder.chestId, ev.getPlayer().getUniqueId());
+        if (ev.getPlayer() instanceof Player p) p.playSound(p.getLocation(), Sound.BLOCK_CHEST_CLOSE, 0.6f, 0.9f);
     }
 
     private void teleportToSpawn(Player p) {
@@ -5273,6 +5489,17 @@ public class LoginX extends JavaPlugin implements Listener {
         Long dTime = duelDeathTime.get(uid);
         if (!activeDuel && dTime == null) return; // ne dueldeyken ne yakın zamanda ölmüş — dokunma
 
+        // Sonuç belli olduktan sonra (1v1 Room: bitiş geri sayımı / ölüm sonrası kilit) lobi komutları (/hub vb.) serbest.
+        // Düello hâlâ sürerken (ACTIVE) kilit aynen devam eder — maçtan komutla kaçılamaz.
+        boolean roomDecided = false;
+        String roomIdOfPlayer = playerAyarlaArena.get(uid);
+        if (roomIdOfPlayer != null) {
+            Room rr = rooms.get(roomIdOfPlayer);
+            roomDecided = rr != null && rr.state != ROOM_ACTIVE;
+        }
+        boolean duelOver = roomDecided || (!playerDuel.containsKey(uid) && !playerAyarlaArena.containsKey(uid));
+        if (duelOver && isLobbyCommand(evCmd.getMessage())) return;
+
         if (activeDuel) {
             // Düellodayken (henüz ölmedi): sadece berabere teklifi komutları kullanılabilir
             String fullCmdActive = evCmd.getMessage().toLowerCase().trim().substring(1);
@@ -5309,6 +5536,22 @@ public class LoginX extends JavaPlugin implements Listener {
             p.sendMessage(duelErr("Ölümden sonra yalnızca " + hl("/ec") + " ve " + hl("/pv") + " komutları kullanılabilir."));
         }
     }
+    /** Düello/oda sonucu belli olduktan sonra serbest kalan lobi komutu mu? (config: duel.lobi-komutlari; varsayılan hub, lobby, spawn) */
+    private boolean isLobbyCommand(String rawMessage) {
+        String c = rawMessage.toLowerCase().trim();
+        if (c.startsWith("/")) c = c.substring(1);
+        int sp = c.indexOf(' ');
+        String name = sp >= 0 ? c.substring(0, sp) : c;
+        int colon = name.indexOf(':');           // eklenti:komut biçimi (örn. hubthat:hub)
+        if (colon >= 0) name = name.substring(colon + 1);
+        List<String> list = getConfig().getStringList("duel.lobi-komutlari");
+        if (list.isEmpty()) list = Arrays.asList("hub", "lobby", "spawn");
+        for (String entry : list) {
+            if (entry != null && entry.trim().replace("/", "").equalsIgnoreCase(name)) return true;
+        }
+        return false;
+    }
+
     /** Bir sender'ın belirli bir LoginX komutunu kullanıp kullanamayacağını kontrol eder.
      *  loginx.admin her zaman yeter. Ayrıca /permkomutyetkiver ile açılan dinamik
      *  "loginx.cmd.<komut>" izni de (LuckPerms üzerinden grup bazlı) geçerlidir. */
@@ -6397,6 +6640,14 @@ public class LoginX extends JavaPlugin implements Listener {
                 try { hudTick(); } catch (Throwable t) { getLogger().warning("HUD hatası: " + t); }
             }
         }.runTaskTimer(this, 40L, hudInterval);
+
+        // HUD yazılarını oyuncuyu takip ettir (yolcu olarak bindirilmiyor — ışınlanmayı engellemesin)
+        final int hudFollow = Math.max(1, getConfig().getInt("hud.takip-tick", 2));
+        new BukkitRunnable() {
+            @Override public void run() {
+                try { hudFollowTick(); } catch (Throwable t) { getLogger().warning("HUD takip hatası: " + t); }
+            }
+        }.runTaskTimer(this, 41L, hudFollow);
     }
 
     private void shutdownExtras() {
@@ -6739,12 +6990,36 @@ public class LoginX extends JavaPlugin implements Listener {
         huds.clear();
     }
 
+    /** HUD yazısının oyuncunun başının üstündeki konumu. */
+    private Location hudAnchor(Player p) {
+        Location l = p.getLocation();
+        l.setYaw(0f);
+        l.setPitch(0f);
+        return l.add(0, p.getHeight(), 0);
+    }
+
+    /** Eski sürümden kalma, oyuncuya yolcu olarak bindirilmiş HUD yazılarını söker. */
+    private void hudDetachLegacyPassengers(Player p) {
+        for (Entity e : new ArrayList<>(p.getPassengers())) {
+            if (e instanceof TextDisplay td && td.getPersistentDataContainer().has(hudTag, PersistentDataType.BYTE)) {
+                p.removePassenger(td);
+                td.remove();
+            }
+        }
+    }
+
+    /**
+     * HUD yazısı oyuncuya YOLCU olarak bindirilmez: üzerinde yolcu olan bir oyuncuyu ışınlamak (Advanced Portals,
+     * warp, hub, /tp) reddedilebilir. Bunun yerine yazı bağımsız durur ve hudFollowTick() ile oyuncuyu takip eder;
+     * istemci tarafı yumuşatma (teleport duration) ile akıcı görünür.
+     */
     private void hudEnsureDisplay(Player p, Hud h) {
         TextDisplay d = h.display;
-        if (d != null && d.isValid() && d.getVehicle() != null && d.getVehicle().getUniqueId().equals(p.getUniqueId())) return;
+        if (d != null && d.isValid() && d.getWorld().equals(p.getWorld())) return;
         hudRemoveDisplay(h);
+        hudDetachLegacyPassengers(p);
         try {
-            TextDisplay nd = p.getWorld().spawn(p.getLocation(), TextDisplay.class);
+            TextDisplay nd = p.getWorld().spawn(hudAnchor(p), TextDisplay.class);
             nd.setPersistent(false);
             nd.getPersistentDataContainer().set(hudTag, PersistentDataType.BYTE, (byte) 1);
             nd.setBillboard(Display.Billboard.CENTER);
@@ -6756,17 +7031,31 @@ public class LoginX extends JavaPlugin implements Listener {
             nd.setLineWidth(400);
             nd.setViewRange(1.0f);
             nd.setBrightness(new Display.Brightness(15, 15));
-            float s = (float) getConfig().getDouble("hud.olcek", 0.85);
+            float sc = (float) getConfig().getDouble("hud.olcek", 0.85);
             float y = (float) getConfig().getDouble("hud.y-offset", 0.2);
             nd.setTransformation(new org.bukkit.util.Transformation(
                 new org.joml.Vector3f(0f, y, 0f), new org.joml.AxisAngle4f(),
-                new org.joml.Vector3f(s, s, s), new org.joml.AxisAngle4f()));
+                new org.joml.Vector3f(sc, sc, sc), new org.joml.AxisAngle4f()));
+            nd.setTeleportDuration(Math.min(59, Math.max(0, getConfig().getInt("hud.takip-tick", 2) + 1)));
             p.hideEntity(this, nd);   // oyuncu kendi HUD'ını görmesin
-            p.addPassenger(nd);
             h.display = nd;
             h.last = "";
         } catch (Throwable t) {
             h.display = null;
+        }
+    }
+
+    /** HUD yazılarını oyuncuların başının üstüne taşır (yalnızca konum değiştiyse). */
+    private void hudFollowTick() {
+        if (huds.isEmpty()) return;
+        for (Map.Entry<UUID, Hud> en : huds.entrySet()) {
+            TextDisplay d = en.getValue().display;
+            if (d == null || !d.isValid()) continue;
+            Player p = Bukkit.getPlayer(en.getKey());
+            if (p == null || !p.isOnline() || !d.getWorld().equals(p.getWorld())) continue; // dünya değiştiyse hudTick yeniden kurar
+            Location target = hudAnchor(p);
+            if (d.getLocation().distanceSquared(target) < 0.0004) continue;
+            d.teleport(target);
         }
     }
 
@@ -6878,9 +7167,19 @@ public class LoginX extends JavaPlugin implements Listener {
         } catch (Throwable ignored) {}
     }
 
-    // Işınlanma / dünya değişimi: yolcu düşer — kısa süre sonra yeniden bağla
+    // Işınlanma / dünya değişimi: HUD yazısı yeni konumda yeniden kurulur
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onHudTeleport(PlayerTeleportEvent e) { hudRefreshLater(e.getPlayer()); }
+    public void onHudTeleport(PlayerTeleportEvent e) {
+        Player p = e.getPlayer();
+        Hud h = huds.get(p.getUniqueId());
+        Location to = e.getTo();
+        // Uzak ışınlanmada (başka dünya / 8+ blok) yazıyı hemen kaldır; 2 tick sonra yeni konumda yeniden kurulur
+        if (h != null && h.display != null && to != null && to.getWorld() != null
+                && (!to.getWorld().equals(e.getFrom().getWorld()) || to.distanceSquared(e.getFrom()) > 64)) {
+            hudRemoveDisplay(h);
+        }
+        hudRefreshLater(p);
+    }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onHudWorldChange(PlayerChangedWorldEvent e) { hudRefreshLater(e.getPlayer()); }
