@@ -43,16 +43,25 @@ duel:
   lobi-komutlari: [hub, lobby, spawn]
 
 # --- OYUNCU İSİM HUD ---
-# y-offset: yükseklik, olcek: yazı boyutu, guncelleme-tick: yenileme hızı
+# guncelleme-tick: yazı içeriği (renk/can) yenileme hızı
+# konum.duzen: "orta" = Klan / vanilla nick / Can   |   "ust" = Klan / Can / vanilla nick
+# konum.olcek: 1.0 = vanilla nick ile birebir piksel boyutu (önerilen; 1.0 dışında nick boşluğu hizası kayar)
+# konum.taban-px: ince ayar. Can/Klan yazısı nick'e göre çok yukarıdaysa küçült, aşağıdaysa büyüt (1 piksel = 0.025 blok)
+# konum.takip-tick: yazının oyuncuyu takip sıklığı (1 = her tick, en az gecikme)
+# konum.yumusatma-tick: yazı oyuncunun GERİSİNDE kalıyorsa 1 yap, ÖNÜNE geçiyorsa 3 yap
 # klan.renkler: yavaş geçiş yapan renkler (hex), klan.hiz: küçük = daha yavaş
 # klan.gosterim: isim | tag
+# NOT: eski y-offset / olcek / takip-tick anahtarları artık kullanılmıyor (silebilirsin).
 hud:
   aktif: true
   textshadow: true
-  y-offset: 0.2
-  olcek: 0.85
   guncelleme-tick: 4
-  takip-tick: 2        # isim yazısının oyuncuyu takip hızı (tick). Yazı artık oyuncuya yolcu olarak bindirilmez; küçük = daha akıcı, büyük = daha az yük
+  konum:
+    duzen: "orta"
+    olcek: 1.0
+    taban-px: 3.5
+    takip-tick: 1
+    yumusatma-tick: 2
   duvar-arkasi: false
   prefix-goster: true
   isim-rengi: "#ffffff"
