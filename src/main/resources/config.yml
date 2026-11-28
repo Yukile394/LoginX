@@ -42,30 +42,45 @@ oda:
 duel:
   lobi-komutlari: [hub, lobby, spawn]
 
+# --- KORUMA: ENGELLER ---
+# engellenen-warplar: koruma altındayken /warp <isim> ile gidilemeyen warp'lar (Essentials varsa oraya giden her ışınlanma da iptal edilir)
+# warp-komutlari: "warp" komutunun takma adları
+# portal-paketleri: ışınlanmayı bu paketlerden biri tetiklerse portal sayılır ve koruma altındakiler geçemez (tüm Advanced Portals portalları dahil)
+koruma:
+  engellenen-warplar: [end]
+  warp-komutlari: [warp, ewarp]
+  portal-paketleri: ["com.sekwah.advancedportals", "com.onarandombox.multiverseportals"]
+
 # --- OYUNCU İSİM HUD ---
-# guncelleme-tick: yazı içeriği (renk/can) yenileme hızı
-# konum.duzen: "orta" = Klan / vanilla nick / Can   |   "ust" = Klan / Can / vanilla nick
-# konum.olcek: 1.0 = vanilla nick ile birebir piksel boyutu (önerilen; 1.0 dışında nick boşluğu hizası kayar)
-# konum.taban-px: ince ayar. Can/Klan yazısı nick'e göre çok yukarıdaysa küçült, aşağıdaysa büyüt (1 piksel = 0.025 blok)
-# konum.takip-tick: yazının oyuncuyu takip sıklığı (1 = her tick, en az gecikme)
-# konum.yumusatma-tick: yazı oyuncunun GERİSİNDE kalıyorsa 1 yap, ÖNÜNE geçiyorsa 3 yap
+# Düzen (2 satır, tek yazı):   [Klan]  Can 20     <- üst satır, klan ve can aynı satırda
+#                              Prefix Nick        <- alt satır (vanilla nick gizlenir, gri arka plan yok)
+# mod: "yolcu" = yazı oyuncuya binmiştir, yürürken/koşarken SIFIR gecikme, her zaman sabit.
+#      "takip" = yazı bağımsızdır ve oyuncuyu ışınlayarak takip eder (hafif gecikme olur ama ışınlanmayı hiç etkilemez).
+# yolcu.komutlar: bu komutlar yazılınca HUD kısa süre sökülür (yolcu varken ışınlanma reddedilir). Süre: yolcu.komut-sure (sn)
+# yolcu.portal-bloklari: bu blokların yanında HUD takılmaz (Advanced Portals'ın kullandığı blok türlerini ekle, örn. "WATER")
+# konum.taban-px: ince ayar (yazı nick'e göre yüksekse küçült, alçaksa büyült; 1 piksel = 0.025 blok)
+# vanilla-isim-gizle: true = oyunun kendi nick etiketi (gri arka planlı) gizlenir, nick HUD içinde çizilir
 # klan.renkler: yavaş geçiş yapan renkler (hex), klan.hiz: küçük = daha yavaş
 # klan.gosterim: isim | tag
-# NOT: eski y-offset / olcek / takip-tick anahtarları artık kullanılmıyor (silebilirsin).
 hud:
   aktif: true
+  mod: "yolcu"
   textshadow: true
   guncelleme-tick: 4
   konum:
-    duzen: "orta"
     olcek: 1.0
     taban-px: 3.5
     takip-tick: 1
     yumusatma-tick: 2
+  yolcu:
+    komut-sure: 8
+    komutlar: [hub, lobby, spawn, warp, ewarp, home, ehome, tpa, tpaccept, tpyes, back, rtp, tp, tpo, tphere, kit, duel, 1v1, 1v1kabul, dueller]
+    portal-bloklari: [NETHER_PORTAL, END_PORTAL, END_GATEWAY]
   duvar-arkasi: false
+  nick-goster: true
   prefix-goster: true
   isim-rengi: "#ffffff"
-  vanilla-isim-gizle: false
+  vanilla-isim-gizle: true
   klan:
     gosterim: "isim"
     kalin: false
