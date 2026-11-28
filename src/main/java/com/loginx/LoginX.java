@@ -6971,7 +6971,6 @@ public class LoginX extends JavaPlugin implements Listener {
 
     private NamespacedKey hudTag;
     private final HashMap<UUID, Hud> huds = new HashMap<>();
-    private final HashMap<String, org.bukkit.scoreboard.Team.OptionStatus> hudForeignTeams = new HashMap<>();
     private double hudPhase = 0;
     private int hudPaletteCounter = 0;
     private int[] hudPalette = {0xff9ecb, 0xffffff, 0xff7ab6, 0xffffff};
@@ -7269,42 +7268,70 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
-    private void hudHideVanilla(Player p) {
-        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", true)) return;
+    /** Nick etiketini izleyen oyuncunun KENDİ scoreboard'u belirler; bu yüzden ana scoreboard + her oyuncunun scoreboard'u işlenir. */
+    private List<org.bukkit.scoreboard.Scoreboard> hudBoards() {
+        List<org.bukkit.scoreboard.Scoreboard> l = new ArrayList<>();
         try {
-            org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
-            org.bukkit.scoreboard.Team t = sb.getEntryTeam(p.getName());
-            if (t == null) {
-                t = sb.getTeam("lxhud");
-                if (t == null) {
-                    t = sb.registerNewTeam("lxhud");
-                    t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
-                }
-                t.addEntry(p.getName());
-            } else if (t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY) != org.bukkit.scoreboard.Team.OptionStatus.NEVER) {
-                hudForeignTeams.putIfAbsent(t.getName(), t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY));
-                t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
+            l.add(Bukkit.getScoreboardManager().getMainScoreboard());
+            for (Player v : Bukkit.getOnlinePlayers()) {
+                org.bukkit.scoreboard.Scoreboard sb = v.getScoreboard();
+                boolean dup = false;
+                for (org.bukkit.scoreboard.Scoreboard x : l) if (x == sb) { dup = true; break; }
+                if (!dup) l.add(sb);
             }
         } catch (Throwable ignored) {}
+        return l;
+    }
+    private final IdentityHashMap<org.bukkit.scoreboard.Scoreboard, Map<String, org.bukkit.scoreboard.Team.OptionStatus>> hudForeignByBoard = new IdentityHashMap<>();
+
+    private void hudHideVanilla(Player p) {
+        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", true)) return;
+        for (org.bukkit.scoreboard.Scoreboard sb : hudBoards()) {
+            try {
+                org.bukkit.scoreboard.Team t = sb.getEntryTeam(p.getName());
+                if (t == null) {
+                    t = sb.getTeam("lxhud");
+                    if (t == null) {
+                        t = sb.registerNewTeam("lxhud");
+                        t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
+                    }
+                    t.addEntry(p.getName());
+                } else if (!t.getName().equals("lxhud")
+                        && t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY) != org.bukkit.scoreboard.Team.OptionStatus.NEVER) {
+                    hudForeignByBoard.computeIfAbsent(sb, k -> new HashMap<>())
+                        .putIfAbsent(t.getName(), t.getOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY));
+                    t.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, org.bukkit.scoreboard.Team.OptionStatus.NEVER);
+                }
+            } catch (Throwable ignored) {}
+        }
     }
 
     private void hudResetTeams() {
-        try {
-            org.bukkit.scoreboard.Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam("lxhud");
-            if (t != null) t.unregister();
-        } catch (Throwable ignored) {}
+        for (org.bukkit.scoreboard.Scoreboard sb : hudBoards()) {
+            try {
+                org.bukkit.scoreboard.Team t = sb.getTeam("lxhud");
+                if (t != null) t.unregister();
+            } catch (Throwable ignored) {}
+        }
     }
 
     private void hudRestoreTeams() {
         try {
-            org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
-            org.bukkit.scoreboard.Team t = sb.getTeam("lxhud");
-            if (t != null) t.unregister();
-            for (Map.Entry<String, org.bukkit.scoreboard.Team.OptionStatus> en : hudForeignTeams.entrySet()) {
-                org.bukkit.scoreboard.Team ft = sb.getTeam(en.getKey());
-                if (ft != null) ft.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, en.getValue());
+            Set<org.bukkit.scoreboard.Scoreboard> all = Collections.newSetFromMap(new IdentityHashMap<>());
+            all.addAll(hudBoards());
+            all.addAll(hudForeignByBoard.keySet());
+            for (org.bukkit.scoreboard.Scoreboard sb : all) {
+                try {
+                    org.bukkit.scoreboard.Team t = sb.getTeam("lxhud");
+                    if (t != null) t.unregister();
+                    Map<String, org.bukkit.scoreboard.Team.OptionStatus> m = hudForeignByBoard.get(sb);
+                    if (m != null) for (Map.Entry<String, org.bukkit.scoreboard.Team.OptionStatus> en : m.entrySet()) {
+                        org.bukkit.scoreboard.Team ft = sb.getTeam(en.getKey());
+                        if (ft != null) ft.setOption(org.bukkit.scoreboard.Team.Option.NAME_TAG_VISIBILITY, en.getValue());
+                    }
+                } catch (Throwable ignored) {}
             }
-            hudForeignTeams.clear();
+            hudForeignByBoard.clear();
         } catch (Throwable ignored) {}
     }
 
@@ -7374,8 +7401,10 @@ public class LoginX extends JavaPlugin implements Listener {
         Hud h = huds.remove(e.getPlayer().getUniqueId());
         hudRemoveDisplay(h);
         try {
-            org.bukkit.scoreboard.Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam("lxhud");
-            if (t != null) t.removeEntry(e.getPlayer().getName());
+            for (org.bukkit.scoreboard.Scoreboard sb : hudBoards()) {
+                org.bukkit.scoreboard.Team t = sb.getTeam("lxhud");
+                if (t != null) t.removeEntry(e.getPlayer().getName());
+            }
         } catch (Throwable ignored) {}
     }
 
