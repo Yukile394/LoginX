@@ -957,12 +957,12 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!p.hasPermission("loginx.admin")) { p.sendMessage(color("&cYetkisiz.")); return true; }
             Location kendiYer = kontYetkiliYeri.get(p.getName());
             if (kendiYer != null) {
-                p.teleport(kendiYer);
+                hudTp(p, kendiYer);
                 p.sendMessage(color("&#00ff88&lKont &8» &fKendi kont yerine ışınlandın."));
                 return true;
             }
             if (kontYeri == null) { p.sendMessage(color("&#ff4444&lKont &8» &cKont yeri ayarlanmamış! &e/kontyeriayarla &cveya &e/kontyeryetkili ayarla <isim> &cyaz.")); return true; }
-            p.teleport(kontYeri);
+            hudTp(p, kontYeri);
             p.sendMessage(color("&#00ff88&lKont &8» &fGenel kont yerine ışınlandın."));
             return true;
         }
@@ -999,10 +999,10 @@ public class LoginX extends JavaPlugin implements Listener {
             // Oyuncuyu YETKİLİNİN AYARLADIĞI YERE ışınla (kontYetkiliYeri'ne, yoksa kontYeri'ne)
             Location adminLoc = kontYetkiliYeri.get(admin.getName());
             Location hedefLoc = adminLoc != null ? adminLoc : kontYeri;
-            target.teleport(hedefLoc);
+            hudTp(target, hedefLoc);
 
             // Yetkili de aynı anda aynı yere ışınlansın (ikisi birlikte kont yerinde olsun)
-            admin.teleport(hedefLoc);
+            hudTp(admin, hedefLoc);
 
             // Freeze — walkSpeed DEĞİL, event ile dondurulur
             kontUntil.put(uid, System.currentTimeMillis() + sureMs); // yeniden set
@@ -1085,7 +1085,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 admin.sendMessage(color("&cBu oyuncu kont altında değil.")); return true;
             }
             // Zaten kont başlayınca zaten dondurulmuş — kont yerine ışınla ve yeniden kilitle
-            target.teleport(kontYeri != null ? kontYeri : target.getLocation());
+            hudTp(target, kontYeri != null ? kontYeri : target.getLocation());
             target.setWalkSpeed(0f);
             target.setFlySpeed(0f);
             target.sendTitle(color("&#ff0000&lDURDURULDUN!"), color("&#ffcc00Kaçmaya çalışma!"), 5, 60, 10);
@@ -1805,6 +1805,7 @@ public class LoginX extends JavaPlugin implements Listener {
         if (p == null || !p.isOnline()) return;
         final UUID uid = p.getUniqueId();
         roomIgnoreUntil.put(uid, System.currentTimeMillis() + 4000L);
+        hudDropNow(p, 3000L);   // yolcu HUD ışınlamayı engellemesin
         p.setWalkSpeed(0.2f); p.setFlySpeed(0.1f);
         String cmd = getConfig().getString("oda.hub-komutu", "hub {oyuncu}").replace("{oyuncu}", p.getName()).trim();
         if (cmd.startsWith("/")) cmd = cmd.substring(1);
@@ -2555,6 +2556,92 @@ public class LoginX extends JavaPlugin implements Listener {
                 || cause == PlayerTeleportEvent.TeleportCause.END_GATEWAY) {
             ev.setCancelled(true);
             p.sendActionBar(color("&#ff4444&fKoruma altındayken portallardan geçemezsin!"));
+            return;
+        }
+        // Eklenti kaynaklı ışınlanmalar (PLUGIN / COMMAND / UNKNOWN): engellenen warp'a gidiyorsa veya portal eklentisi tetiklediyse iptal
+        if (cause == PlayerTeleportEvent.TeleportCause.PLUGIN
+                || cause == PlayerTeleportEvent.TeleportCause.COMMAND
+                || cause == PlayerTeleportEvent.TeleportCause.UNKNOWN) {
+            if (protTeleportsToBlockedWarp(ev.getTo())) {
+                ev.setCancelled(true);
+                protWarn(p, "Koruma altındayken bu warp'a gidemezsin!");
+            } else if (protCalledByPortalPlugin()) {
+                ev.setCancelled(true);
+                protWarn(p, "Koruma altındayken portallardan geçemezsin!");
+            }
+        }
+    }
+
+    // ─── Koruma: engellenen warp'lar ve portal eklentileri ───
+    //  config:  koruma.engellenen-warplar: [end]                       -> /warp end (ve oraya giden her ışınlanma)
+    //           koruma.warp-komutlari: [warp, ewarp]                   -> "warp" komutunun takma adları
+    //           koruma.portal-paketleri: [com.sekwah.advancedportals, com.onarandombox.multiverseportals]
+    //             (ışınlanmayı çağıran kodun yığınında bu paketlerden biri varsa portal sayılır — eklentinin kendi API'sine bağlı değildir)
+    private boolean protIsProtected(Player p) {
+        return protectedUntil.getOrDefault(p.getUniqueId(), 0L) > System.currentTimeMillis();
+    }
+    private List<String> protList(String path, String... def) {
+        List<String> l = getConfig().getStringList(path);
+        return l.isEmpty() ? Arrays.asList(def) : l;
+    }
+    private void protWarn(Player p, String msg) {
+        long now = System.currentTimeMillis();
+        long lastWarn = wrongKeyCooldown.getOrDefault(p.getUniqueId(), 0L);
+        if (lastWarn + 5000L < now) {
+            wrongKeyCooldown.put(p.getUniqueId(), now);
+            p.sendTitle(color("&#ff4444&lKoruma Aktif"), color("&#ffcc00" + msg), 5, 40, 10);
+        }
+        p.sendActionBar(color("&#ff4444&f" + msg));
+    }
+    private boolean protCalledByPortalPlugin() {
+        List<String> pk = protList("koruma.portal-paketleri", "com.sekwah.advancedportals", "com.onarandombox.multiverseportals");
+        for (StackTraceElement el : new Throwable().getStackTrace()) {
+            String cn = el.getClassName();
+            for (String s : pk) if (!s.isEmpty() && cn.startsWith(s)) return true;
+        }
+        return false;
+    }
+    /** Essentials varsa engellenen warp'ların konumunu okur (yansıtma); hedef o konuma 3 blok yakınsa true. */
+    private boolean protTeleportsToBlockedWarp(Location to) {
+        if (to == null || to.getWorld() == null) return false;
+        try {
+            org.bukkit.plugin.Plugin ess = Bukkit.getPluginManager().getPlugin("Essentials");
+            if (ess == null || !ess.isEnabled()) return false;
+            Object warps = ess.getClass().getMethod("getWarps").invoke(ess);
+            java.lang.reflect.Method gw = warps.getClass().getMethod("getWarp", String.class);
+            for (String name : protList("koruma.engellenen-warplar", "end")) {
+                try {
+                    Object o = gw.invoke(warps, name);
+                    if (o instanceof Location wl && wl.getWorld() != null && wl.getWorld().equals(to.getWorld())
+                            && wl.distanceSquared(to) <= 9.0) return true;
+                } catch (Throwable ignored) { /* warp yok */ }
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    // ─── Koruma altındayken /warp end (ve config'teki diğer engelli warp'lar) komutu ───
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onProtectionWarpCommand(PlayerCommandPreprocessEvent ev) {
+        Player p = ev.getPlayer();
+        if (!protIsProtected(p)) return;
+        String raw = ev.getMessage().trim();
+        if (raw.startsWith("/")) raw = raw.substring(1);
+        String[] parts = raw.split("\\s+");
+        if (parts.length < 2) return;
+        String label = parts[0].toLowerCase(Locale.ROOT);
+        int colon = label.indexOf(':');                 // essentials:warp biçimi
+        if (colon >= 0) label = label.substring(colon + 1);
+        boolean isWarp = false;
+        for (String w : protList("koruma.warp-komutlari", "warp", "ewarp")) if (w.equalsIgnoreCase(label)) { isWarp = true; break; }
+        if (!isWarp) return;
+        String target = parts[1].toLowerCase(Locale.ROOT);
+        for (String b : protList("koruma.engellenen-warplar", "end")) {
+            if (b.equalsIgnoreCase(target)) {
+                ev.setCancelled(true);
+                protWarn(p, "Koruma altındayken /warp " + b + " kullanamazsın!");
+                return;
+            }
         }
     }
 
@@ -2578,7 +2665,7 @@ public class LoginX extends JavaPlugin implements Listener {
             // Bir sonraki tikte de aynı yerde kalsın diye anında konumu geri sabitle (sprint clip önleme)
             Bukkit.getScheduler().runTask(this, () -> {
                 if (p.isOnline()) {
-                    p.teleport(from);
+                    hudTp(p, from);
                     p.setVelocity(new Vector(0, 0, 0));
                 }
             });
@@ -4577,7 +4664,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
         Location s1 = duelSpawn1.get(arenaId);
         Location s2 = duelSpawn2.get(arenaId);
-        p1.teleport(s1); p2.teleport(s2);
+        hudTp(p1, s1); hudTp(p2, s2);
 
         for (Player dp : new Player[]{p1, p2}) {
             dp.setWalkSpeed(0f);
@@ -5278,10 +5365,11 @@ public class LoginX extends JavaPlugin implements Listener {
         new BukkitRunnable() {
             @Override public void run() {
                 if (!p.isOnline()) return;
+                hudDropNow(p, 3000L);
                 // ── Öncelik: /duelspawnayarla ile ayarlanan özel duel/1v1 spawn noktası ──
                 // Essentials'a veya world spawn'a bağlı kalmadan garanti ışınlama sağlar.
                 if (duelOzelSpawn != null) {
-                    p.teleport(duelOzelSpawn);
+                    hudTp(p, duelOzelSpawn);
                     return;
                 }
                 // Essentials spawn komutu (combat plugin bypass için konsol)
@@ -5290,7 +5378,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 } else {
                     // Essentials yoksa world spawn
                     Location spawnLoc = p.getWorld().getSpawnLocation();
-                    p.teleport(spawnLoc);
+                    hudTp(p, spawnLoc);
                 }
             }
         }.runTaskLater(this, 1L);
@@ -6878,7 +6966,7 @@ public class LoginX extends JavaPlugin implements Listener {
         TextDisplay display;
         String last = "";
         String clan = null, prefix = "";
-        long cacheAt = 0, teamAt = 0;
+        long cacheAt = 0, teamAt = 0, suppressUntil = 0;
     }
 
     private NamespacedKey hudTag;
@@ -6950,9 +7038,6 @@ public class LoginX extends JavaPlugin implements Listener {
     private static final double HUD_NAME_BASELINE = 0.3; // nick taban çizgisi (h + 0.3)
     private static final int HUD_LINE_PITCH = 10;        // TextDisplay satır aralığı (piksel)
 
-    private boolean hudLayoutMiddle() {
-        return !"ust".equalsIgnoreCase(getConfig().getString("hud.konum.duzen", "orta"));
-    }
     private double hudScale() {
         return Math.max(0.5, Math.min(2.0, getConfig().getDouble("hud.konum.olcek", 1.0)));
     }
@@ -6960,22 +7045,37 @@ public class LoginX extends JavaPlugin implements Listener {
     private float hudYOffset() {
         double s = hudScale();
         double basePx = getConfig().getDouble("hud.konum.taban-px", 3.5); // blok tabanından ilk satırın taban çizgisine uzaklık (piksel)
-        int nickSlot = hudLayoutMiddle() ? 1 : 0;                         // nick boşluğu alttan kaçıncı satır
-        return (float) (HUD_NAME_BASELINE - (basePx + HUD_LINE_PITCH * nickSlot) * HUD_PX * s);
+        // Alt satır = nick (vanilla nick ile aynı taban çizgisi), üst satır = Klan + Can
+        return (float) (HUD_NAME_BASELINE - basePx * HUD_PX * s);
     }
 
-    /** Nick'e DOKUNMAZ: klan ve can satırları, vanilla nick için ayrılmış boş satırla birlikte tek displayde. */
+    /** Yolcu modu mu? (true: HUD oyuncuya binmiş, hareket ederken sıfır gecikme; false: bağımsız ve takip eden) */
+    private boolean hudPassengerMode() {
+        return !"takip".equalsIgnoreCase(getConfig().getString("hud.mod", "yolcu"));
+    }
+
+    /**
+     * İki satır, tek display:
+     *   üst : [Klan]  Can 20      (klan yoksa yalnızca Can — aynı satırda)
+     *   alt : Prefix Nick         (vanilla nick gizlenir; arka plan yok, gölge textshadow ayarına bağlı)
+     */
     private String hudBuildText(Player p, Hud h) {
-        // Klan (yoksa görünmez boş satır — diğer satırlar hep aynı yerde kalır)
-        String clanLine = (h.clan != null && !h.clan.isEmpty()) ? hudGradient(h.clan) : SEC + "r ";
-        // Can (kalın değil)
         double max = Math.max(1.0, p.getMaxHealth());
         int hp = (int) Math.ceil(Math.max(0, p.getHealth()));
-        String hpLine = hudHex(0xf2f4f8) + "Can " + hudHex(hudHealthColor(p.getHealth() / max)) + hp;
-        String nickSlot = SEC + "r ";   // vanilla isim etiketinin oturacağı boş satır
-        return hudLayoutMiddle()
-            ? clanLine + "\n" + nickSlot + "\n" + hpLine
-            : clanLine + "\n" + hpLine + "\n" + nickSlot;
+        String hpPart = hudHex(0xf2f4f8) + "Can " + hudHex(hudHealthColor(p.getHealth() / max)) + hp;
+        String top = (h.clan != null && !h.clan.isEmpty())
+            ? hudGradient(h.clan) + SEC + "r  " + hpPart
+            : hpPart;
+        String nick;
+        if (getConfig().getBoolean("hud.nick-goster", true)) {
+            String pre = getConfig().getBoolean("hud.prefix-goster", true) ? h.prefix : "";
+            int nameRgb = 0xffffff;
+            try { nameRgb = Integer.parseInt(getConfig().getString("hud.isim-rengi", "#ffffff").replace("#", "").trim(), 16) & 0xFFFFFF; } catch (Exception ignored) {}
+            nick = pre + SEC + "r" + hudHex(nameRgb) + p.getName();
+        } else {
+            nick = SEC + "r ";
+        }
+        return top + "\n" + nick;
     }
 
     // ── SimpleClans (yansıtma — derleme bağımlılığı gerekmez) ──
@@ -7070,7 +7170,9 @@ public class LoginX extends JavaPlugin implements Listener {
      */
     private void hudEnsureDisplay(Player p, Hud h) {
         TextDisplay d = h.display;
-        if (d != null && d.isValid() && d.getWorld().equals(p.getWorld())) return;
+        boolean ride = hudPassengerMode();
+        if (d != null && d.isValid() && d.getWorld().equals(p.getWorld())
+                && (!ride || p.getPassengers().contains(d))) return;
         hudRemoveDisplay(h);
         hudDetachLegacyPassengers(p);
         try {
@@ -7093,6 +7195,7 @@ public class LoginX extends JavaPlugin implements Listener {
             // Yumuşatma: istemcinin yazıyı yeni konuma kaç tickte taşıyacağı. 1 = en az gecikme, 3 = oyuncu modeline en yakın akıcılık.
             nd.setTeleportDuration(Math.min(59, Math.max(0, getConfig().getInt("hud.konum.yumusatma-tick", 2))));
             p.hideEntity(this, nd);   // oyuncu kendi HUD'ını görmesin
+            if (ride && !p.addPassenger(nd)) { nd.remove(); h.display = null; return; }
             h.display = nd;
             h.last = "";
         } catch (Throwable t) {
@@ -7102,7 +7205,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
     /** HUD yazılarını oyuncuların başının üstüne taşır (yalnızca konum değiştiyse). */
     private void hudFollowTick() {
-        if (huds.isEmpty()) return;
+        if (huds.isEmpty() || hudPassengerMode()) return; // yolcu modunda takip gerekmez: istemci konumu oyuncuyla birlikte işler
         for (Map.Entry<UUID, Hud> en : huds.entrySet()) {
             TextDisplay d = en.getValue().display;
             if (d == null || !d.isValid()) continue;
@@ -7114,8 +7217,60 @@ public class LoginX extends JavaPlugin implements Listener {
         }
     }
 
+    // ── Yolcu modu güvenliği ─────────────────────────────────────────────────────────────────────
+    //  Üzerinde yolcu olan oyuncuyu ışınlamak Paper'da reddedilir. Bu yüzden HUD, ışınlanma öncesinde
+    //  sökülür ve sonra (PlayerTeleportEvent -> hudRefreshLater) yeniden bindirilir:
+    //   * LoginX'in kendi ışınlamaları  -> hudTp()
+    //   * Işınlatan komutlar (hub, warp, spawn, tpa...) -> komut yazıldığı anda sökülür, hud.yolcu.komut-sure sn bekler
+    //   * Portal blokları (hud.yolcu.portal-bloklari) yakınında HUD hiç bindirilmez
+    private void hudDropNow(Player p, long suppressMs) {
+        Hud h = huds.get(p.getUniqueId());
+        if (h == null) return;
+        if (suppressMs > 0) h.suppressUntil = Math.max(h.suppressUntil, System.currentTimeMillis() + suppressMs);
+        hudRemoveDisplay(h);
+    }
+    private boolean hudTp(Player p, Location l) {
+        hudDropNow(p, 0);
+        return p.teleport(l);
+    }
+    private Set<Material> hudPortalMats() {
+        Set<Material> s = EnumSet.noneOf(Material.class);
+        for (String n : protList("hud.yolcu.portal-bloklari", "NETHER_PORTAL", "END_PORTAL", "END_GATEWAY")) {
+            try { s.add(Material.valueOf(n.trim().toUpperCase(Locale.ROOT))); } catch (Exception ignored) {}
+        }
+        return s;
+    }
+    private boolean hudNearPortal(Location loc) {
+        if (loc == null || loc.getWorld() == null) return false;
+        Set<Material> mats = hudPortalMats();
+        int bx = loc.getBlockX(), by = loc.getBlockY(), bz = loc.getBlockZ();
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = 0; dy <= 1; dy++)
+                for (int dz = -1; dz <= 1; dz++)
+                    if (mats.contains(loc.getWorld().getBlockAt(bx + dx, by + dy, bz + dz).getType())) return true;
+        return false;
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onHudTeleportCommand(PlayerCommandPreprocessEvent ev) {
+        if (!hudPassengerMode()) return;
+        String raw = ev.getMessage().trim();
+        if (raw.startsWith("/")) raw = raw.substring(1);
+        String label = raw.split("\\s+")[0].toLowerCase(Locale.ROOT);
+        int colon = label.indexOf(':');
+        if (colon >= 0) label = label.substring(colon + 1);
+        for (String c : protList("hud.yolcu.komutlar", "hub", "lobby", "spawn", "warp", "ewarp", "home", "ehome",
+                "tpa", "tpaccept", "tpyes", "back", "rtp", "tp", "tpo", "tphere", "kit", "duel", "1v1", "1v1kabul", "dueller")) {
+            if (c.equalsIgnoreCase(label)) {
+                long ms = getConfig().getLong("hud.yolcu.komut-sure", 8) * 1000L;
+                hudDropNow(ev.getPlayer(), ms);
+                return;
+            }
+        }
+    }
+
     private void hudHideVanilla(Player p) {
-        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", false)) return;
+        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", true)) return;
         try {
             org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
             org.bukkit.scoreboard.Team t = sb.getEntryTeam(p.getName());
@@ -7193,9 +7348,11 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!hudShouldShow(p)) { hudRemoveDisplay(h); continue; }
             if (nowMs - h.cacheAt > 1000L) {
                 h.clan = hudClanName(p);
+                h.prefix = hudPrefix(p);
                 h.cacheAt = nowMs;
             }
             if (nowMs - h.teamAt > 2000L) { hudHideVanilla(p); h.teamAt = nowMs; }
+            if (nowMs < h.suppressUntil || (hudPassengerMode() && hudNearPortal(p.getLocation()))) { hudRemoveDisplay(h); continue; }
             hudEnsureDisplay(p, h);
             if (h.display == null) continue;
             String text = hudBuildText(p, h);
@@ -7245,6 +7402,7 @@ public class LoginX extends JavaPlugin implements Listener {
                 if (!p.isOnline()) return;
                 Hud h = huds.get(p.getUniqueId());
                 if (h == null || !hudShouldShow(p)) return;
+                if (System.currentTimeMillis() < h.suppressUntil) return;   // hudTick süre dolunca yeniden kurar
                 hudEnsureDisplay(p, h);
             }
         }.runTaskLater(this, 2L);
