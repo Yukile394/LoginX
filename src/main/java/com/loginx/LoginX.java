@@ -1837,6 +1837,22 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskLater(this, 30L);
     }
 
+    /** Oyuncu şu an BAŞKA bir (var olan) odanın düellosuna bağlı mı? */
+    private boolean roomEngagedElsewhere(UUID u, Room self) {
+        if (u == null) return false;
+        String id = playerAyarlaArena.get(u);
+        return id != null && !id.equals(self.id) && rooms.containsKey(id);
+    }
+
+    /** İki oda aynı dünyada kesişiyor mu? */
+    private Room roomOverlapping(Room n) {
+        for (Room o : rooms.values()) {
+            if (o == n || !o.world.equals(n.world)) continue;
+            if (o.box.overlaps(n.box)) return o;
+        }
+        return null;
+    }
+
     private Room roomAt(Location l) {
         if (l == null || l.getWorld() == null) return null;
         for (Room r : rooms.values())
@@ -1988,6 +2004,8 @@ public class LoginX extends JavaPlugin implements Listener {
                 Room r = new Room(id, getConfig().getString(base + ".world", "world"),
                     Integer.parseInt(mn[0].trim()), Integer.parseInt(mn[1].trim()), Integer.parseInt(mn[2].trim()),
                     Integer.parseInt(mx[0].trim()), Integer.parseInt(mx[1].trim()), Integer.parseInt(mx[2].trim()));
+                Room ovl = roomOverlapping(r);
+                if (ovl != null) getLogger().warning("1v1 Room '" + id + "' ile '" + ovl.id + "' üst üste biniyor! Birini /1v1randomsil ile sil. (Çifte maç koruması aktif)");
                 rooms.put(id, r);
                 try { arenaCounter = Math.max(arenaCounter, Integer.parseInt(id.substring(id.lastIndexOf('_') + 1))); } catch (Exception ignored) {}
             } catch (Exception ex) {
@@ -1999,8 +2017,8 @@ public class LoginX extends JavaPlugin implements Listener {
         Room r = rooms.remove(id);
         if (r == null) return false;
         roomOpenGlass(r);
-        if (r.a != null) playerAyarlaArena.remove(r.a);
-        if (r.b != null) playerAyarlaArena.remove(r.b);
+        if (r.a != null) playerAyarlaArena.remove(r.a, r.id);
+        if (r.b != null) playerAyarlaArena.remove(r.b, r.id);
         saveRooms(true);
         return true;
     }
@@ -2036,6 +2054,11 @@ public class LoginX extends JavaPlugin implements Listener {
             Room r = new Room(id, clicked.getWorld().getName(),
                 l1.getBlockX(), l1.getBlockY(), l1.getBlockZ(),
                 clicked.getBlockX(), clicked.getBlockY(), clicked.getBlockZ());
+            Room ov = roomOverlapping(r);
+            if (ov != null) {
+                p.sendMessage(roomErr("Bu oda " + hl(ov.id) + " odasıyla üst üste biniyor. Çifte maç hatası olmaması için kurulmadı."));
+                return;
+            }
             rooms.put(id, r);
             saveRooms(true);
             ayarlaPos1.remove(uid); ayarlaPos2.remove(uid);
@@ -2073,6 +2096,8 @@ public class LoginX extends JavaPlugin implements Listener {
             if (gm == GameMode.SPECTATOR || gm == GameMode.CREATIVE) continue;
             Long ig = roomIgnoreUntil.get(p.getUniqueId());
             if (ig != null && ig > nowMs) continue;
+            // Başka bir odanın düellosuna bağlı oyuncu bu odada sayılmaz (üst üste binen odalarda çifte maçı engeller)
+            if (roomEngagedElsewhere(p.getUniqueId(), r)) continue;
             if (r.box.contains(p.getLocation().toVector())) now.add(p.getUniqueId());
         }
 
@@ -2111,6 +2136,8 @@ public class LoginX extends JavaPlugin implements Listener {
 
         if (r.state == ROOM_ACTIVE) {
             if (r.a == null || r.b == null) { roomReset(r, false); return; }
+            // Bayat (hayalet) oda: oyuncular artık başka bir odanın düellosuna bağlı -> sessizce sıfırla, kimseyi yenik sayma
+            if (roomEngagedElsewhere(r.a, r) || roomEngagedElsewhere(r.b, r)) { roomReset(r, false); return; }
             for (UUID du : new UUID[]{r.a, r.b}) {
                 Player dp = Bukkit.getPlayer(du);
                 if (dp == null || !dp.isOnline()) { roomForfeit(r, du); return; }
@@ -2145,6 +2172,10 @@ public class LoginX extends JavaPlugin implements Listener {
         Player pa = Bukkit.getPlayer(ua), pb = Bukkit.getPlayer(ub);
         if (pa == null || !pa.isOnline() || pb == null || !pb.isOnline()) {
             r.inside.removeIf(u -> { Player q = Bukkit.getPlayer(u); return q == null || !q.isOnline(); });
+            return;
+        }
+        if (roomEngagedElsewhere(ua, r) || roomEngagedElsewhere(ub, r)) {
+            r.inside.clear(); // oyunculardan biri zaten başka odada düelloda
             return;
         }
         r.a = ua; r.b = ub; r.winner = null;
@@ -2217,8 +2248,9 @@ public class LoginX extends JavaPlugin implements Listener {
     private void roomReset(Room r, boolean sendWinnerToHub) {
         roomOpenGlass(r);
         UUID win = r.winner;
-        if (r.a != null) playerAyarlaArena.remove(r.a);
-        if (r.b != null) playerAyarlaArena.remove(r.b);
+        // Yalnızca bu odaya ait kayıtları sil: oyuncu başka odaya bağlıysa onun kaydına dokunma
+        if (r.a != null) playerAyarlaArena.remove(r.a, r.id);
+        if (r.b != null) playerAyarlaArena.remove(r.b, r.id);
         r.a = null; r.b = null; r.winner = null;
         r.inside.clear(); r.outTicks.clear();
         r.state = ROOM_WAIT; r.lastSec = -1;
@@ -6642,7 +6674,7 @@ public class LoginX extends JavaPlugin implements Listener {
         }.runTaskTimer(this, 40L, hudInterval);
 
         // HUD yazılarını oyuncuyu takip ettir (yolcu olarak bindirilmiyor — ışınlanmayı engellemesin)
-        final int hudFollow = Math.max(1, getConfig().getInt("hud.takip-tick", 2));
+        final int hudFollow = Math.max(1, getConfig().getInt("hud.konum.takip-tick", 1));
         new BukkitRunnable() {
             @Override public void run() {
                 try { hudFollowTick(); } catch (Throwable t) { getLogger().warning("HUD takip hatası: " + t); }
@@ -6908,19 +6940,42 @@ public class LoginX extends JavaPlugin implements Listener {
         return ratio >= 0.5 ? hudLerp(yellow, green, (ratio - 0.5) / 0.5) : hudLerp(red, yellow, ratio / 0.5);
     }
 
-    /** Nick'e DOKUNMAZ: yalnızca nick'in altında 2 satır — klan (varsa) ve can. Nick bu displayde yok. */
+    // ── HUD yerleşimi (Minecraft ölçülerine göre) ───────────────────────────────────────────────
+    //  Vanilla isim etiketi: pivot = oyuncu yüksekliği (p.getHeight) + 0.5; yazı 1/40 blok/piksel (0.025),
+    //  satır kutusu 9 piksel, taban çizgisi pivotun 8 piksel altında  => taban çizgisi = h + 0.3.
+    //  TextDisplay: 1/40 blok/piksel, satır aralığı 10 piksel, blok TABANDAN yukarı büyür (varlık konumu = blok tabanı).
+    //  Ölçek 1.0 olunca yazının piksel yoğunluğu vanilla nick ile birebir aynıdır (bulanık/kırık piksel yok).
+    //  Düzen "orta": Klan / [vanilla nick boşluğu] / Can   |   "ust": Klan / Can / [vanilla nick boşluğu]
+    private static final double HUD_PX = 0.025;          // 1 yazı pikseli = 1/40 blok
+    private static final double HUD_NAME_BASELINE = 0.3; // nick taban çizgisi (h + 0.3)
+    private static final int HUD_LINE_PITCH = 10;        // TextDisplay satır aralığı (piksel)
+
+    private boolean hudLayoutMiddle() {
+        return !"ust".equalsIgnoreCase(getConfig().getString("hud.konum.duzen", "orta"));
+    }
+    private double hudScale() {
+        return Math.max(0.5, Math.min(2.0, getConfig().getDouble("hud.konum.olcek", 1.0)));
+    }
+    /** Varlık konumuna (= p.getHeight() hizası) göre dikey kaydırma. Nick satırı boşluğunun taban çizgisini hizalar. */
+    private float hudYOffset() {
+        double s = hudScale();
+        double basePx = getConfig().getDouble("hud.konum.taban-px", 3.5); // blok tabanından ilk satırın taban çizgisine uzaklık (piksel)
+        int nickSlot = hudLayoutMiddle() ? 1 : 0;                         // nick boşluğu alttan kaçıncı satır
+        return (float) (HUD_NAME_BASELINE - (basePx + HUD_LINE_PITCH * nickSlot) * HUD_PX * s);
+    }
+
+    /** Nick'e DOKUNMAZ: klan ve can satırları, vanilla nick için ayrılmış boş satırla birlikte tek displayde. */
     private String hudBuildText(Player p, Hud h) {
-        StringBuilder sb = new StringBuilder();
-        // 1) Klan (yoksa görünmez boş satır — Can satırı hep aynı yerde kalır)
-        if (h.clan != null && !h.clan.isEmpty()) sb.append(hudGradient(h.clan));
-        else sb.append(SEC).append("r ");
-        sb.append('\n');
-        // 2) Can (kalın değil)
+        // Klan (yoksa görünmez boş satır — diğer satırlar hep aynı yerde kalır)
+        String clanLine = (h.clan != null && !h.clan.isEmpty()) ? hudGradient(h.clan) : SEC + "r ";
+        // Can (kalın değil)
         double max = Math.max(1.0, p.getMaxHealth());
         int hp = (int) Math.ceil(Math.max(0, p.getHealth()));
-        sb.append(hudHex(0xf2f4f8)).append("Can ")
-          .append(hudHex(hudHealthColor(p.getHealth() / max))).append(hp);
-        return sb.toString();
+        String hpLine = hudHex(0xf2f4f8) + "Can " + hudHex(hudHealthColor(p.getHealth() / max)) + hp;
+        String nickSlot = SEC + "r ";   // vanilla isim etiketinin oturacağı boş satır
+        return hudLayoutMiddle()
+            ? clanLine + "\n" + nickSlot + "\n" + hpLine
+            : clanLine + "\n" + hpLine + "\n" + nickSlot;
     }
 
     // ── SimpleClans (yansıtma — derleme bağımlılığı gerekmez) ──
@@ -7031,12 +7086,12 @@ public class LoginX extends JavaPlugin implements Listener {
             nd.setLineWidth(400);
             nd.setViewRange(1.0f);
             nd.setBrightness(new Display.Brightness(15, 15));
-            float sc = (float) getConfig().getDouble("hud.olcek", 0.85);
-            float y = (float) getConfig().getDouble("hud.y-offset", 0.2);
+            float sc = (float) hudScale();
             nd.setTransformation(new org.bukkit.util.Transformation(
-                new org.joml.Vector3f(0f, y, 0f), new org.joml.AxisAngle4f(),
+                new org.joml.Vector3f(0f, hudYOffset(), 0f), new org.joml.AxisAngle4f(),
                 new org.joml.Vector3f(sc, sc, sc), new org.joml.AxisAngle4f()));
-            nd.setTeleportDuration(Math.min(59, Math.max(0, getConfig().getInt("hud.takip-tick", 2) + 1)));
+            // Yumuşatma: istemcinin yazıyı yeni konuma kaç tickte taşıyacağı. 1 = en az gecikme, 3 = oyuncu modeline en yakın akıcılık.
+            nd.setTeleportDuration(Math.min(59, Math.max(0, getConfig().getInt("hud.konum.yumusatma-tick", 2))));
             p.hideEntity(this, nd);   // oyuncu kendi HUD'ını görmesin
             h.display = nd;
             h.last = "";
@@ -7054,7 +7109,7 @@ public class LoginX extends JavaPlugin implements Listener {
             Player p = Bukkit.getPlayer(en.getKey());
             if (p == null || !p.isOnline() || !d.getWorld().equals(p.getWorld())) continue; // dünya değiştiyse hudTick yeniden kurar
             Location target = hudAnchor(p);
-            if (d.getLocation().distanceSquared(target) < 0.0004) continue;
+            if (d.getLocation().distanceSquared(target) < 1.0e-8) continue; // yalnızca gerçekten aynı konumdaysa atla
             d.teleport(target);
         }
     }
