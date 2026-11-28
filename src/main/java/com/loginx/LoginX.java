@@ -6603,7 +6603,7 @@ public class LoginX extends JavaPlugin implements Listener {
     private final HashMap<String, org.bukkit.scoreboard.Team.OptionStatus> hudForeignTeams = new HashMap<>();
     private double hudPhase = 0;
     private int hudPaletteCounter = 0;
-    private int[] hudPalette = {0x5ec8ff, 0x8f7bff, 0xff7ad9, 0xffb86b};
+    private int[] hudPalette = {0xff9ecb, 0xffffff, 0xff7ab6, 0xffffff};
 
     private void hudLoadPalette() {
         List<String> l = getConfig().getStringList("hud.klan.renkler");
@@ -6641,7 +6641,7 @@ public class LoginX extends JavaPlugin implements Listener {
 
     private String hudGradient(String text) {
         double spread = getConfig().getDouble("hud.klan.yayilim", 0.09);
-        boolean bold = getConfig().getBoolean("hud.klan.kalin", true);
+        boolean bold = getConfig().getBoolean("hud.klan.kalin", false);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < text.length(); i++) {
             sb.append(hudHex(hudSample(hudPhase + i * spread)));
@@ -6657,23 +6657,18 @@ public class LoginX extends JavaPlugin implements Listener {
         return ratio >= 0.5 ? hudLerp(yellow, green, (ratio - 0.5) / 0.5) : hudLerp(red, yellow, ratio / 0.5);
     }
 
+    /** Nick'e DOKUNMAZ: yalnızca nick'in altında 2 satır — klan (varsa) ve can. Nick bu displayde yok. */
     private String hudBuildText(Player p, Hud h) {
         StringBuilder sb = new StringBuilder();
-        // 1) Klan (yoksa görünmez boş satır — isim/can konumu hep sabit kalır)
+        // 1) Klan (yoksa görünmez boş satır — Can satırı hep aynı yerde kalır)
         if (h.clan != null && !h.clan.isEmpty()) sb.append(hudGradient(h.clan));
         else sb.append(SEC).append("r ");
         sb.append('\n');
-        // 2) Oyuncu adı
-        String nameColor = getConfig().getString("hud.isim-rengi", "#ffffff").replace("#", "");
-        int nc; try { nc = Integer.parseInt(nameColor, 16); } catch (Exception ex) { nc = 0xffffff; }
-        if (getConfig().getBoolean("hud.prefix-goster", true) && h.prefix != null && !h.prefix.isEmpty()) sb.append(h.prefix);
-        sb.append(hudHex(nc)).append(p.getName());
-        sb.append('\n');
-        // 3) Can
+        // 2) Can (kalın değil)
         double max = Math.max(1.0, p.getMaxHealth());
         int hp = (int) Math.ceil(Math.max(0, p.getHealth()));
-        sb.append(hudHex(0xe9eef6)).append(SEC).append('l').append("Can ")
-          .append(hudHex(hudHealthColor(p.getHealth() / max))).append(SEC).append('l').append(hp);
+        sb.append(hudHex(0xf2f4f8)).append("Can ")
+          .append(hudHex(hudHealthColor(p.getHealth() / max))).append(hp);
         return sb.toString();
     }
 
@@ -6761,8 +6756,8 @@ public class LoginX extends JavaPlugin implements Listener {
             nd.setLineWidth(400);
             nd.setViewRange(1.0f);
             nd.setBrightness(new Display.Brightness(15, 15));
-            float s = (float) getConfig().getDouble("hud.olcek", 1.0);
-            float y = (float) getConfig().getDouble("hud.y-offset", 0.42);
+            float s = (float) getConfig().getDouble("hud.olcek", 0.85);
+            float y = (float) getConfig().getDouble("hud.y-offset", 0.2);
             nd.setTransformation(new org.bukkit.util.Transformation(
                 new org.joml.Vector3f(0f, y, 0f), new org.joml.AxisAngle4f(),
                 new org.joml.Vector3f(s, s, s), new org.joml.AxisAngle4f()));
@@ -6776,7 +6771,7 @@ public class LoginX extends JavaPlugin implements Listener {
     }
 
     private void hudHideVanilla(Player p) {
-        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", true)) return;
+        if (!getConfig().getBoolean("hud.vanilla-isim-gizle", false)) return;
         try {
             org.bukkit.scoreboard.Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
             org.bukkit.scoreboard.Team t = sb.getEntryTeam(p.getName());
@@ -6854,7 +6849,6 @@ public class LoginX extends JavaPlugin implements Listener {
             if (!hudShouldShow(p)) { hudRemoveDisplay(h); continue; }
             if (nowMs - h.cacheAt > 1000L) {
                 h.clan = hudClanName(p);
-                h.prefix = hudPrefix(p);
                 h.cacheAt = nowMs;
             }
             if (nowMs - h.teamAt > 2000L) { hudHideVanilla(p); h.teamAt = nowMs; }
